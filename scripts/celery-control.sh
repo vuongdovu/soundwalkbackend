@@ -1,40 +1,53 @@
 #!/bin/bash
 
-# Celery Control Script for Spot Backend
-# Usage: ./scripts/celery-control.sh [start|stop|status]
+# =============================================================================
+# Celery Control Script
+# =============================================================================
+# Control Celery worker and beat services
+# Usage: ./scripts/celery-control.sh [start|stop|status|restart]
+# =============================================================================
 
-COMPOSE_CMD="docker-compose -f docker-compose.yaml -f docker-compose.prod.yml"
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 case "$1" in
     "stop"|"disable")
-        echo "🛑 Stopping Celery services..."
-        $COMPOSE_CMD stop celery-worker celery-beat
-        echo "✅ Celery services stopped"
-        echo "⚠️  Note: Large video uploads (>50MB) and photo verification will not work"
+        echo -e "${YELLOW}Stopping Celery services...${NC}"
+        docker-compose stop celery-worker celery-beat
+        echo -e "${GREEN}Celery services stopped${NC}"
         ;;
     "start"|"enable")
-        echo "🚀 Starting Celery services..."
-        $COMPOSE_CMD start celery-worker celery-beat
-        echo "✅ Celery services started"
-        echo "✅ All features restored"
+        echo -e "${BLUE}Starting Celery services...${NC}"
+        docker-compose start celery-worker celery-beat
+        echo -e "${GREEN}Celery services started${NC}"
         ;;
     "status")
-        echo "📊 Celery service status:"
-        $COMPOSE_CMD ps celery-worker celery-beat
+        echo -e "${BLUE}Celery service status:${NC}"
+        docker-compose ps celery-worker celery-beat
         ;;
     "restart")
-        echo "🔄 Restarting Celery services..."
-        $COMPOSE_CMD restart celery-worker celery-beat
-        echo "✅ Celery services restarted"
+        echo -e "${YELLOW}Restarting Celery services...${NC}"
+        docker-compose restart celery-worker celery-beat
+        echo -e "${GREEN}Celery services restarted${NC}"
+        ;;
+    "logs")
+        echo -e "${BLUE}Celery logs (Ctrl+C to stop):${NC}"
+        docker-compose logs -f celery-worker celery-beat
         ;;
     *)
-        echo "Usage: $0 [start|stop|status|restart]"
+        echo "Celery Control Script"
+        echo ""
+        echo "Usage: $0 [command]"
         echo ""
         echo "Commands:"
-        echo "  stop    - Disable Celery (saves ~157MB RAM)"
-        echo "  start   - Enable Celery (restores all features)"
+        echo "  start   - Start Celery worker and beat"
+        echo "  stop    - Stop Celery services"
         echo "  status  - Show current status"
         echo "  restart - Restart Celery services"
+        echo "  logs    - Follow Celery logs"
         exit 1
         ;;
-esac 
+esac

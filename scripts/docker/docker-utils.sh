@@ -113,7 +113,7 @@ check_health() {
                             fi
                             ;;
                         "web")
-                            if docker-compose exec -T web python spot/manage.py check >/dev/null 2>&1; then
+                            if docker-compose exec -T web python manage.py check >/dev/null 2>&1; then
                                 print_success "$service: healthy (Django check passed)"
                                 healthy_count=$((healthy_count + 1))
                             else
@@ -205,8 +205,8 @@ run_django_command() {
     fi
     
     print_step "Running Django command: $command"
-    
-    if docker-compose exec web python spot/manage.py $command; then
+
+    if docker-compose exec web python manage.py $command; then
         print_success "Django command completed"
     else
         print_error "Django command failed"
@@ -225,10 +225,10 @@ backup_database() {
     mkdir -p "$backup_dir"
     
     # Check if we're using SQLite or PostgreSQL
-    if docker-compose exec -T web python spot/manage.py shell -c "from django.db import connection; print(connection.vendor)" 2>/dev/null | grep -q "sqlite"; then
+    if docker-compose exec -T web python manage.py shell -c "from django.db import connection; print(connection.vendor)" 2>/dev/null | grep -q "sqlite"; then
         # SQLite backup
         print_status "Backing up SQLite database..."
-        if docker-compose exec -T web python spot/manage.py dumpdata --natural-foreign --natural-primary > "$backup_file.json"; then
+        if docker-compose exec -T web python manage.py dumpdata --natural-foreign --natural-primary > "$backup_file.json"; then
             print_success "Database backup created: $backup_file.json"
         else
             print_error "Failed to create database backup"
@@ -272,7 +272,7 @@ restore_database() {
     
     if [[ "$backup_file" == *.json ]]; then
         # Django fixture restore
-        if docker-compose exec -T web python spot/manage.py loaddata - < "$backup_file"; then
+        if docker-compose exec -T web python manage.py loaddata - < "$backup_file"; then
             print_success "Database restored from $backup_file"
         else
             print_error "Failed to restore database"

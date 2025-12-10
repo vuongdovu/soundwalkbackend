@@ -1,0 +1,229 @@
+# =============================================================================
+# Docker Compose Configuration for Django 5.2 LTS Application
+# =============================================================================
+# Services:
+#   - web: Django application served via Uvicorn (ASGI)
+#   - db: PostgreSQL 16 database
+#   - redis: Redis 7 for caching and Celery broker
+#   - nginx: Reverse proxy and static file server
+#   - celery-worker: Background task processor
+#   - celery-beat: Periodic task scheduler
+#
+# Usage:
+#   Development: docker-compose up --build
+#   Production: docker-compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Web Application (Django + Uvicorn)
+  # ---------------------------------------------------------------------------
+  # Serves the Django application via ASGI for async support
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: app-web
+    restart: unless-stopped
+    env_file:
+      - .env.development
+    environment:
+      # Ensure Django knows where to find settings
+      - DJANGO_SETTINGS_MODULE=config.settings
+    volumes:
+      # Development: Mount source code for hot reloading
+      - ./app:/app
+      # Persistent storage for static and media files
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    # Port exposed internally (nginx proxies to this)
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  # Primary data store with persistent volume
+  db:
+    image: postgres:16-alpine
+    container_name: app-db
+    restart: unless-stopped
+    env_file:
+      - .env.development
+    environment:
+      # PostgreSQL uses these environment variables
+      - POSTGRES_DB=${POSTGRES_DB:-app_dev}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      # Named volume for data persistence across container restarts
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      # pg_isready checks if PostgreSQL is accepting connections
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-app_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis (Cache & Message Broker)
+  # ---------------------------------------------------------------------------
+  # Used for Django cache and Celery task queue
+  redis:
+    image: redis:7-alpine
+    container_name: app-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      # Persist Redis data (optional, remove for ephemeral cache)
+      - redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Nginx (Reverse Proxy)
+  # ---------------------------------------------------------------------------
+  # Handles incoming requests, serves static/media files, proxies to Django
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: app-nginx
+    restart: unless-stopped
+    ports:
+      # Only nginx exposes ports to the host
+      - "80:80"
+      # Uncomment for HTTPS (requires SSL certificates)
+      # - "443:443"
+    volumes:
+      # Mount the development nginx config
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+      # Static and media files served directly by nginx
+      - static_volume:/var/www/static:ro
+      - media_volume:/var/www/media:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker (Background Tasks)
+  # ---------------------------------------------------------------------------
+  # Processes async tasks from the Redis queue
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: app-celery-worker
+    restart: unless-stopped
+    command: celery -A config worker --loglevel=info --concurrency=2
+    env_file:
+      - .env.development
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - COLLECT_STATIC=false
+    volumes:
+      # Mount source code for development
+      - ./app:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "celery", "-A", "config", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Celery Beat (Periodic Task Scheduler)
+  # ---------------------------------------------------------------------------
+  # Schedules periodic tasks (cron-like functionality)
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: app-celery-beat
+    restart: unless-stopped
+    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env.development
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - COLLECT_STATIC=false
+    volumes:
+      - ./app:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Wait for worker to be healthy before starting beat
+      celery-worker:
+        condition: service_healthy
+    networks:
+      - app-network
+
+# -----------------------------------------------------------------------------
+# Networks
+# -----------------------------------------------------------------------------
+# Internal network for service communication
+networks:
+  app-network:
+    driver: bridge
+    name: app-network
+
+# -----------------------------------------------------------------------------
+# Volumes
+# -----------------------------------------------------------------------------
+# Named volumes for persistent data
+volumes:
+  # PostgreSQL data - persists database across restarts
+  postgres_data:
+    name: app-postgres-data
+
+  # Redis data - optional persistence for cache
+  redis_data:
+    name: app-redis-data
+
+  # Static files - collected by Django, served by nginx
+  static_volume:
+    name: app-static
+
+  # Media files - user uploads, served by nginx
+  media_volume:
+    name: app-media

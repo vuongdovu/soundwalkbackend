@@ -1,0 +1,82 @@
+# =============================================================================
+# Django 5.2 LTS Infrastructure Dependencies
+# =============================================================================
+# All versions pinned for reproducible builds. Update periodically for security.
+# Last updated: 2025-12
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Framework
+# -----------------------------------------------------------------------------
+Django==5.2.9                      # LTS until April 2028 (security fixes Dec 2025)
+djangorestframework==3.16.1        # REST API framework (Django 5.2 support)
+
+# -----------------------------------------------------------------------------
+# Authentication & Social Login
+# -----------------------------------------------------------------------------
+dj-rest-auth[with_social]==7.0.1   # REST endpoints for auth (django-allauth>=64 support)
+django-allauth==65.3.0             # Social authentication (Google, Apple)
+djangorestframework-simplejwt==5.3.1  # JWT token authentication
+
+# -----------------------------------------------------------------------------
+# Database
+# -----------------------------------------------------------------------------
+psycopg[binary]==3.2.13            # PostgreSQL adapter (Python 3.14 binary support)
+
+# -----------------------------------------------------------------------------
+# Caching & Message Broker
+# -----------------------------------------------------------------------------
+django-redis==5.4.0                # Redis cache backend for Django
+redis==5.2.1                       # Redis client library
+
+# -----------------------------------------------------------------------------
+# Background Tasks
+# -----------------------------------------------------------------------------
+celery[redis]==5.4.0               # Distributed task queue
+django-celery-beat==2.8.1          # Database-backed periodic task scheduler (Django 5.2 support)
+
+# -----------------------------------------------------------------------------
+# ASGI Server & WebSockets
+# -----------------------------------------------------------------------------
+uvicorn[standard]==0.32.1          # ASGI server with uvloop for production
+gunicorn==23.0.0                   # Process manager (optional, for multi-worker)
+channels==4.0.0                    # Django Channels for WebSocket support
+channels-redis==4.2.0              # Redis channel layer for Channels
+
+# -----------------------------------------------------------------------------
+# API Documentation
+# -----------------------------------------------------------------------------
+drf-spectacular==0.29.0            # OpenAPI 3.1 schema generation & Swagger UI
+
+# -----------------------------------------------------------------------------
+# Configuration & Utilities
+# -----------------------------------------------------------------------------
+django-environ==0.11.2             # Environment variable configuration
+django-cors-headers==4.6.0         # CORS handling for API
+whitenoise==6.8.2                  # Static file serving (fallback)
+
+# -----------------------------------------------------------------------------
+# Payments
+# -----------------------------------------------------------------------------
+stripe==7.0.0                      # Stripe payment processing
+
+# -----------------------------------------------------------------------------
+# AI Providers
+# -----------------------------------------------------------------------------
+openai==1.7.0                      # OpenAI API client
+anthropic==0.8.0                   # Anthropic API client
+
+# -----------------------------------------------------------------------------
+# Push Notifications
+# -----------------------------------------------------------------------------
+firebase-admin==6.2.0              # Firebase Cloud Messaging (FCM)
+PyAPNs2==0.7.2                     # Apple Push Notification Service (APNs)
+
+# -----------------------------------------------------------------------------
+# Development & Testing (optional - uncomment as needed)
+# -----------------------------------------------------------------------------
+# pytest==8.3.4
+# pytest-django==4.9.0
+# pytest-cov==6.0.0
+# factory-boy==3.3.1
+# ruff==0.8.4
