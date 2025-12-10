@@ -1,0 +1,52 @@
+# IDE
+\.idea
+*/\.idea
+\.DS_Store
+*\/\.DS_Store
+
+.vscode
+.vscode/*
+
+# MCP Configuration
+.mcp.json
+
+
+# Cached py files
+__pycache__/
+*/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment files
+# \.env
+# \.env*
+# local.env
+# .env
+
+# DB Files
+*.sqlite3
+db.sqlite3
+*/db.sqlite3
+
+# venv
+venv
+
+debug.log
+logs/*
+
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat-schedule.*.*
+
+.claude
+
+# Test coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Linting and type checking caches
+.ruff_cache/
+.mypy_cache/
