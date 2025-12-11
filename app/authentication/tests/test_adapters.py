@@ -161,8 +161,9 @@ class TestCustomAccountAdapter:
             # Act: Call with commit=False
             adapter.save_user(mock_request, user, mock_form, commit=False)
 
-        # Assert: No LinkedAccount exists
-        assert LinkedAccount.objects.count() == 0
+        # Assert: No LinkedAccount exists for this user
+        # Note: We filter by email since user isn't saved (no pk)
+        assert LinkedAccount.objects.filter(provider_user_id="uncommitted@example.com").count() == 0
 
     def test_save_user_uses_get_or_create_for_idempotency(
         self, db, adapter, mock_request, mock_form

@@ -394,7 +394,8 @@ class TestUserModel:
         with freeze_time("2024-01-02 10:00:00"):
             new_user = UserFactory()
 
-        users = list(User.objects.all())
+        # Filter to only include users created by this test
+        users = list(User.objects.filter(pk__in=[old_user.pk, new_user.pk]))
 
         assert users[0] == new_user
         assert users[1] == old_user

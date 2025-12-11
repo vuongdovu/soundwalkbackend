@@ -33,6 +33,10 @@ def group_auth_endpoints(result, generator, request, public):
             elif operation_id.startswith("auth_profile_"):
                 operation["tags"] = ["Auth - Profile"]
 
+            # Group biometric endpoints
+            elif operation_id.startswith("auth_biometric_"):
+                operation["tags"] = ["Auth - Biometric"]
+
             # All other auth endpoints stay under "Auth"
             elif operation_id.startswith("auth_"):
                 operation["tags"] = ["Auth"]

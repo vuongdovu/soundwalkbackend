@@ -741,11 +741,11 @@ class TestCreateUser:
         different casing. Email addresses are case-insensitive.
         """
         user = AuthService.create_user(
-            email="TEST@EXAMPLE.COM",
+            email="TEST_LOWERCASE@EXAMPLE.COM",
             password="SecurePass123!"
         )
 
-        assert user.email == "test@example.com"
+        assert user.email == "test_lowercase@example.com"
 
     def test_create_user_strips_email_whitespace(self, db):
         """

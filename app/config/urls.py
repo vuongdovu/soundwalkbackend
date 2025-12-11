@@ -12,6 +12,7 @@ URL Structure:
     /api/v1/auth/                  - Authentication endpoints (dj-rest-auth)
         login/                     - Email/password login
         logout/                    - Logout
+        registration/              - User registration
         user/                      - Current user (GET/PUT/PATCH)
         password/reset/            - Request password reset
         password/change/           - Change password
@@ -32,6 +33,7 @@ https://docs.djangoproject.com/en/5.2/topics/http/urls/
 
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import TemplateView
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView
 
 from core.views import health_check
@@ -45,8 +47,8 @@ api_v1_patterns = [
     path("auth/", include("dj_rest_auth.urls")),
     # Custom authentication (profile, verify-email, etc.)
     path("auth/", include("authentication.urls")),
-    # Registration (optional - uncomment to enable)
-    # path("auth/registration/", include("dj_rest_auth.registration.urls")),
+    # Registration
+    path("auth/registration/", include("dj_rest_auth.registration.urls")),
     # Application APIs
     path("payments/", include("payments.urls")),
     path("notifications/", include("notifications.urls")),
@@ -62,6 +64,13 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     # Health check (Docker, Kubernetes, load balancers)
     path("health/", health_check, name="health_check"),
+    # Password reset confirm URL (required by dj-rest-auth for email generation)
+    # This URL is included in password reset emails and should point to your frontend
+    path(
+        "password/reset/confirm/<uidb64>/<token>/",
+        TemplateView.as_view(template_name="password_reset_confirm.html"),
+        name="password_reset_confirm",
+    ),
     # API v1
     path("api/v1/", include(api_v1_patterns)),
 ]

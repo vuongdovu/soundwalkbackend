@@ -5,11 +5,12 @@ This module provides API views for:
 - Profile management (CRUD operations with conditional username validation)
 - Email verification
 - Social authentication (Google, Apple)
+- Biometric authentication (Face ID / Touch ID)
 - Custom auth endpoints not covered by dj-rest-auth
 
 Related files:
     - serializers.py: Request/response serialization
-    - services.py: Business logic
+    - services.py: Business logic (AuthService, BiometricService)
     - urls.py: URL routing
     - adapters.py: Social auth adapters
 
@@ -26,6 +27,12 @@ Note:
     - Google: /api/v1/auth/google/
     - Apple: /api/v1/auth/apple/
 
+    Biometric endpoints:
+    - Enroll: /api/v1/auth/biometric/enroll/
+    - Challenge: /api/v1/auth/biometric/challenge/
+    - Authenticate: /api/v1/auth/biometric/authenticate/
+    - Status: /api/v1/auth/biometric/status/
+
     ProfileView handles both initial profile completion and subsequent updates.
     If profile.username is empty, username is required in the request.
 """
@@ -33,6 +40,7 @@ Note:
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiResponse
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -42,8 +50,16 @@ from rest_framework.views import APIView
 from authentication.serializers import (
     ProfileSerializer,
     ProfileUpdateSerializer,
+    UserSerializer,
+    BiometricEnrollSerializer,
+    BiometricEnrollResponseSerializer,
+    BiometricChallengeRequestSerializer,
+    BiometricChallengeResponseSerializer,
+    BiometricAuthenticateSerializer,
+    BiometricStatusSerializer,
+    BiometricDisableResponseSerializer,
 )
-from authentication.services import AuthService
+from authentication.services import AuthService, BiometricService
 
 
 # =============================================================================
@@ -322,3 +338,443 @@ class DeactivateAccountView(APIView):
         AuthService.deactivate_user(request.user, reason)
 
         return Response({"detail": "Account deactivated successfully"})
+
+
+# =============================================================================
+# Biometric Authentication Views
+# =============================================================================
+
+
+class BiometricEnrollView(APIView):
+    """
+    API view for biometric enrollment.
+
+    POST: Enroll biometric authentication for the current user
+
+    URL: /api/v1/auth/biometric/enroll/
+
+    Requires authentication. The user must be logged in before enrolling
+    biometric authentication.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Enroll biometric authentication",
+        description=(
+            "Store the user's EC public key for Face ID/Touch ID authentication. "
+            "The public key should be generated in the iOS Secure Enclave with biometric "
+            "protection. Overwrites any existing key (single device support)."
+        ),
+        tags=["Auth - Biometric"],
+        request=BiometricEnrollSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=BiometricEnrollResponseSerializer,
+                description="Successfully enrolled biometric authentication",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={"enrolled_at": "2025-01-15T10:30:00Z"},
+                    ),
+                ],
+            ),
+            400: OpenApiResponse(
+                description="Invalid public key format",
+                examples=[
+                    OpenApiExample(
+                        "Invalid Key",
+                        value={"detail": "Invalid EC public key format. Must be P-256 curve."},
+                    ),
+                ],
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                "Enroll Request",
+                value={"public_key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE..."},
+                request_only=True,
+            ),
+        ],
+    )
+    def post(self, request):
+        """
+        Enroll biometric authentication.
+
+        Stores the user's public key (generated in iOS Secure Enclave with
+        biometric protection). Overwrites any existing key (single device).
+
+        Request body:
+            {
+                "public_key": "<base64_der_ec_public_key>"
+            }
+
+        Returns:
+            {
+                "enrolled_at": "2025-01-15T10:30:00Z"
+            }
+        """
+        serializer = BiometricEnrollSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            BiometricService.enroll(
+                user=request.user,
+                public_key=serializer.validated_data["public_key"],
+            )
+        except ValueError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.utils import timezone
+        return Response({"enrolled_at": timezone.now()})
+
+
+class BiometricChallengeView(APIView):
+    """
+    API view for requesting a biometric authentication challenge.
+
+    POST: Generate a challenge nonce for biometric authentication
+
+    URL: /api/v1/auth/biometric/challenge/
+
+    No authentication required (this is part of the login flow).
+    """
+
+    permission_classes = []
+
+    @extend_schema(
+        summary="Request biometric challenge",
+        description=(
+            "Generate a cryptographically secure challenge nonce for biometric authentication. "
+            "The client must sign this challenge with the private key protected by Face ID/Touch ID. "
+            "Challenges expire after 5 minutes (300 seconds)."
+        ),
+        tags=["Auth - Biometric"],
+        request=BiometricChallengeRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=BiometricChallengeResponseSerializer,
+                description="Challenge generated successfully",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={"challenge": "dGhpcyBpcyBhIHRlc3QgY2hhbGxlbmdl...", "expires_in": 300},
+                    ),
+                ],
+            ),
+            404: OpenApiResponse(
+                description="User not found or biometric not enabled",
+                examples=[
+                    OpenApiExample(
+                        "Not Enabled",
+                        value={"error": "biometric_not_enabled", "detail": "Biometric authentication is not enabled for this user"},
+                    ),
+                ],
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                "Challenge Request",
+                value={"email": "user@example.com"},
+                request_only=True,
+            ),
+        ],
+    )
+    def post(self, request):
+        """
+        Generate a biometric authentication challenge.
+
+        Creates a cryptographically secure nonce that must be signed by
+        the user's private key (protected by Face ID/Touch ID).
+
+        Request body:
+            {
+                "email": "user@example.com"
+            }
+
+        Returns:
+            {
+                "challenge": "<base64_nonce>",
+                "expires_in": 300
+            }
+
+        Errors:
+            404: User not found or biometric not enabled
+        """
+        serializer = BiometricChallengeRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            challenge_data = BiometricService.create_challenge(
+                email=serializer.validated_data["email"],
+            )
+        except ValueError as e:
+            return Response(
+                {"error": "biometric_not_enabled", "detail": str(e)},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        response_serializer = BiometricChallengeResponseSerializer(challenge_data)
+        return Response(response_serializer.data)
+
+
+class BiometricAuthenticateView(APIView):
+    """
+    API view for biometric authentication.
+
+    POST: Authenticate with biometric signature
+
+    URL: /api/v1/auth/biometric/authenticate/
+
+    No authentication required (this IS the login).
+    """
+
+    permission_classes = []
+
+    @extend_schema(
+        summary="Authenticate with biometrics",
+        description=(
+            "Verify the ECDSA signature of the challenge and issue JWT tokens on success. "
+            "The signature must be created using the private key protected by Face ID/Touch ID. "
+            "Challenges are single-use and expire after 5 minutes."
+        ),
+        tags=["Auth - Biometric"],
+        request=BiometricAuthenticateSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="Authentication successful",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={
+                            "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                            "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                            "user": {
+                                "id": 1,
+                                "email": "user@example.com",
+                                "full_name": "John Doe",
+                                "username": "johndoe",
+                                "email_verified": True,
+                                "profile_completed": True,
+                                "linked_providers": ["email", "google"],
+                                "date_joined": "2025-01-01T00:00:00Z",
+                            },
+                        },
+                    ),
+                ],
+            ),
+            401: OpenApiResponse(
+                description="Invalid signature, expired challenge, or user not found",
+                examples=[
+                    OpenApiExample(
+                        "Invalid Signature",
+                        value={"error": "invalid_signature", "detail": "Signature verification failed"},
+                    ),
+                    OpenApiExample(
+                        "Expired Challenge",
+                        value={"error": "invalid_signature", "detail": "Challenge expired or not found"},
+                    ),
+                ],
+            ),
+        },
+        examples=[
+            OpenApiExample(
+                "Authenticate Request",
+                value={
+                    "email": "user@example.com",
+                    "challenge": "dGhpcyBpcyBhIHRlc3QgY2hhbGxlbmdl...",
+                    "signature": "MEUCIQD...",
+                },
+                request_only=True,
+            ),
+        ],
+    )
+    def post(self, request):
+        """
+        Authenticate using biometric signature.
+
+        Verifies the signature and issues JWT tokens on success.
+
+        Request body:
+            {
+                "email": "user@example.com",
+                "challenge": "<base64_nonce>",
+                "signature": "<base64_ecdsa_signature>"
+            }
+
+        Returns:
+            {
+                "access": "<jwt_access_token>",
+                "refresh": "<jwt_refresh_token>",
+                "user": { ... }
+            }
+
+        Errors:
+            401: Invalid signature, expired challenge, or user not found
+        """
+        serializer = BiometricAuthenticateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            user = BiometricService.authenticate(
+                email=serializer.validated_data["email"],
+                challenge=serializer.validated_data["challenge"],
+                signature=serializer.validated_data["signature"],
+            )
+        except ValueError as e:
+            return Response(
+                {"error": "invalid_signature", "detail": str(e)},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Generate JWT tokens (same as dj-rest-auth login)
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from authentication.serializers import UserSerializer
+
+        refresh = RefreshToken.for_user(user)
+
+        # Update last login
+        from django.contrib.auth import user_logged_in
+        user_logged_in.send(sender=user.__class__, request=request, user=user)
+
+        return Response({
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": UserSerializer(user).data,
+        })
+
+
+class BiometricDisableView(APIView):
+    """
+    API view for disabling biometric authentication.
+
+    DELETE: Disable biometric authentication for the current user
+
+    URL: /api/v1/auth/biometric/
+
+    Requires authentication.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Disable biometric authentication",
+        description=(
+            "Clear the stored public key, disabling Face ID/Touch ID authentication. "
+            "The user will need to re-enroll to use biometrics again."
+        ),
+        tags=["Auth - Biometric"],
+        responses={
+            200: OpenApiResponse(
+                response=BiometricDisableResponseSerializer,
+                description="Biometric authentication disabled",
+                examples=[
+                    OpenApiExample(
+                        "Success",
+                        value={"disabled": True},
+                    ),
+                ],
+            ),
+        },
+    )
+    def delete(self, request):
+        """
+        Disable biometric authentication.
+
+        Clears the stored public key, requiring re-enrollment to use
+        biometrics again.
+
+        Returns:
+            {
+                "disabled": true
+            }
+        """
+        BiometricService.disable(request.user)
+        return Response({"disabled": True})
+
+
+class BiometricStatusView(APIView):
+    """
+    API view for checking biometric authentication status.
+
+    GET: Check if biometric authentication is enabled for a user
+
+    URL: /api/v1/auth/biometric/status/?email=user@example.com
+
+    No authentication required. Used by the login screen to determine
+    whether to show the Face ID/Touch ID option.
+
+    Security:
+        Returns false for non-existent users (no user enumeration).
+    """
+
+    permission_classes = []
+
+    @extend_schema(
+        summary="Check biometric status",
+        description=(
+            "Check if biometric authentication is enabled for a user. "
+            "Used by the login screen to determine whether to show the Face ID/Touch ID option. "
+            "Returns false for non-existent users to prevent user enumeration."
+        ),
+        tags=["Auth - Biometric"],
+        parameters=[
+            OpenApiParameter(
+                name="email",
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="User's email address",
+                type=str,
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=BiometricStatusSerializer,
+                description="Biometric status retrieved",
+                examples=[
+                    OpenApiExample(
+                        "Enabled",
+                        value={"biometric_enabled": True},
+                    ),
+                    OpenApiExample(
+                        "Disabled",
+                        value={"biometric_enabled": False},
+                    ),
+                ],
+            ),
+            400: OpenApiResponse(
+                description="Missing email parameter",
+                examples=[
+                    OpenApiExample(
+                        "Missing Email",
+                        value={"detail": "Email parameter is required"},
+                    ),
+                ],
+            ),
+        },
+    )
+    def get(self, request):
+        """
+        Check if biometric authentication is enabled.
+
+        Query parameters:
+            email: User's email address
+
+        Returns:
+            {
+                "biometric_enabled": true/false
+            }
+        """
+        email = request.query_params.get("email", "")
+        if not email:
+            return Response(
+                {"detail": "Email parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        enabled = BiometricService.check_status(email)
+        serializer = BiometricStatusSerializer({"biometric_enabled": enabled})
+        return Response(serializer.data)

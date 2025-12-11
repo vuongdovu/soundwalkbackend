@@ -30,6 +30,8 @@ services:
       - .env.development
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
+      # Log file name for this service (used by Django logging configuration)
+      - LOG_FILE_NAME=django.log
     # Hot reload: Uvicorn watches for file changes and restarts automatically
     command: uvicorn config.asgi:application --host 0.0.0.0 --port 8080 --reload
     volumes:
@@ -38,6 +40,8 @@ services:
       # Persistent storage for static and media files
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      # Persistent logs directory - survives container restarts
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy
@@ -124,6 +128,8 @@ services:
       # Static and media files served directly by nginx
       - static_volume:/var/www/static:ro
       - media_volume:/var/www/media:ro
+      # Persistent nginx logs - access.log and error.log
+      - ./logs:/var/log/nginx
     depends_on:
       web:
         condition: service_healthy
@@ -152,9 +158,13 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
       - COLLECT_STATIC=false
+      # Log file name for this service (used by Django logging configuration)
+      - LOG_FILE_NAME=celery-worker.log
     volumes:
       # Mount source code for development
       - ./app:/app
+      # Persistent logs directory - survives container restarts
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy
@@ -186,8 +196,12 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
       - COLLECT_STATIC=false
+      # Log file name for this service (used by Django logging configuration)
+      - LOG_FILE_NAME=celery-beat.log
     volumes:
       - ./app:/app
+      # Persistent logs directory - survives container restarts
+      - ./logs:/app/logs
     depends_on:
       db:
         condition: service_healthy

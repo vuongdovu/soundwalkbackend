@@ -93,11 +93,11 @@ class TestCeleryTaskConfiguration:
         Email tasks should retry on transient failures (network issues, etc.)
         with exponential backoff to avoid overwhelming email services.
         """
-        # Tasks with bind=True have access to self.retry()
+        # Tasks with bind=True have __bound__ = True, giving access to self.retry()
         # autoretry_for enables automatic retries on specified exceptions
-        assert send_verification_email.bind is True
-        assert send_password_reset_email.bind is True
-        assert send_welcome_email.bind is True
+        assert send_verification_email.__bound__ is True
+        assert send_password_reset_email.__bound__ is True
+        assert send_welcome_email.__bound__ is True
 
         # Verify max_retries is configured
         assert send_verification_email.max_retries == 3

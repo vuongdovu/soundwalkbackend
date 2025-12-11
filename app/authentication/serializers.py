@@ -6,19 +6,18 @@ This module provides DRF serializers for:
 - Profile model (read/update operations with conditional username validation)
 - LinkedAccount model (read operations)
 - Registration (create user)
+- Biometric authentication (enroll, challenge, authenticate)
 
 Related files:
     - models.py: User, Profile, and LinkedAccount models
     - views.py: Views that use these serializers
+    - services.py: BiometricService for authentication logic
     - settings.py: REST_AUTH serializer configuration
 
 Security:
     - Password fields are write-only
     - Sensitive fields are read-only where appropriate
-
-Note:
-    ProfileUpdateSerializer handles both initial profile completion and
-    subsequent updates. If profile.username is empty, username is required.
+    - Biometric public keys validated as EC P-256 format
 """
 
 import re
@@ -252,13 +251,13 @@ class RegisterSerializer(serializers.Serializer):
     """
 
     email = serializers.EmailField(required=True)
-    password = serializers.CharField(
+    password1 = serializers.CharField(
         write_only=True,
         min_length=8,
         style={"input_type": "password"},
         help_text="Password must be at least 8 characters.",
     )
-    password_confirm = serializers.CharField(
+    password2 = serializers.CharField(
         write_only=True,
         style={"input_type": "password"},
         help_text="Confirm your password.",
@@ -273,19 +272,29 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         """Validate that passwords match."""
-        if attrs["password"] != attrs["password_confirm"]:
+        if attrs["password1"] != attrs["password2"]:
             raise serializers.ValidationError(
-                {"password_confirm": "Passwords do not match."}
+                {"password2": "Passwords do not match."}
             )
         return attrs
 
-    def create(self, validated_data):
-        """Create a new user with the validated data."""
-        validated_data.pop("password_confirm")
+    def get_cleaned_data(self):
+        """Return cleaned data for user creation (required by dj-rest-auth)."""
+        return {
+            "email": self.validated_data.get("email", ""),
+            "password1": self.validated_data.get("password1", ""),
+        }
 
+    def save(self, request):
+        """
+        Create a new user with the validated data.
+
+        This method signature is required by dj-rest-auth which passes
+        the request object to the serializer's save method.
+        """
         user = User.objects.create_user(
-            email=validated_data["email"],
-            password=validated_data["password"],
+            email=self.validated_data["email"],
+            password=self.validated_data["password1"],
         )
 
         # Create LinkedAccount for email registration
@@ -296,3 +305,125 @@ class RegisterSerializer(serializers.Serializer):
         )
 
         return user
+
+
+# -----------------------------------------------------------------------------
+# Biometric Authentication Serializers
+# -----------------------------------------------------------------------------
+
+
+class BiometricEnrollSerializer(serializers.Serializer):
+    """
+    Serializer for biometric enrollment.
+
+    Validates the public key format (base64-encoded DER, EC P-256).
+    Used by POST /api/v1/auth/biometric/enroll/
+    """
+
+    public_key = serializers.CharField(
+        required=True,
+        help_text="Base64-encoded EC public key (DER format, P-256 curve)",
+    )
+
+    def validate_public_key(self, value):
+        """Validate public key is valid base64 and proper EC key format."""
+        import base64
+
+        # Basic format validation - detailed validation in service
+        try:
+            base64.b64decode(value)
+        except Exception:
+            raise serializers.ValidationError("Invalid base64 encoding")
+
+        if len(value) < 50:
+            raise serializers.ValidationError("Public key appears too short")
+
+        return value
+
+
+class BiometricEnrollResponseSerializer(serializers.Serializer):
+    """Response serializer for biometric enrollment."""
+
+    enrolled_at = serializers.DateTimeField()
+
+
+class BiometricChallengeRequestSerializer(serializers.Serializer):
+    """
+    Serializer for requesting a biometric challenge.
+
+    Used by POST /api/v1/auth/biometric/challenge/
+    """
+
+    email = serializers.EmailField(
+        required=True,
+        help_text="User's email address",
+    )
+
+    def validate_email(self, value):
+        """Normalize email to lowercase."""
+        return value.lower().strip()
+
+
+class BiometricChallengeResponseSerializer(serializers.Serializer):
+    """Response serializer for biometric challenge."""
+
+    challenge = serializers.CharField(
+        help_text="Base64-encoded challenge nonce to sign",
+    )
+    expires_in = serializers.IntegerField(
+        help_text="Challenge expiration time in seconds",
+    )
+
+
+class BiometricAuthenticateSerializer(serializers.Serializer):
+    """
+    Serializer for biometric authentication.
+
+    Used by POST /api/v1/auth/biometric/authenticate/
+    """
+
+    email = serializers.EmailField(
+        required=True,
+        help_text="User's email address",
+    )
+    challenge = serializers.CharField(
+        required=True,
+        help_text="The challenge nonce that was signed",
+    )
+    signature = serializers.CharField(
+        required=True,
+        help_text="Base64-encoded ECDSA signature of the challenge",
+    )
+
+    def validate_email(self, value):
+        """Normalize email to lowercase."""
+        return value.lower().strip()
+
+    def validate_signature(self, value):
+        """Validate signature is valid base64."""
+        import base64
+
+        try:
+            base64.b64decode(value)
+        except Exception:
+            raise serializers.ValidationError("Invalid base64 encoding")
+
+        return value
+
+
+class BiometricStatusSerializer(serializers.Serializer):
+    """
+    Response serializer for biometric status check.
+
+    Used by GET /api/v1/auth/biometric/status/
+    """
+
+    biometric_enabled = serializers.BooleanField(
+        help_text="Whether biometric authentication is enabled for this user",
+    )
+
+
+class BiometricDisableResponseSerializer(serializers.Serializer):
+    """Response serializer for disabling biometric auth."""
+
+    disabled = serializers.BooleanField()

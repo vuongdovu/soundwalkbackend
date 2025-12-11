@@ -17,10 +17,16 @@ def pytest_configure():
     """Configure Django settings before tests run."""
     django.setup()
 
-    # Disable throttling during tests to prevent rate limit failures
     from django.conf import settings
+
+    # Disable throttling during tests to prevent rate limit failures
     settings.REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
     settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {}
+
+    # Use fast password hasher for tests (PBKDF2 is too slow with 870K iterations)
+    settings.PASSWORD_HASHERS = [
+        "django.contrib.auth.hashers.MD5PasswordHasher",
+    ]
 
 
 @pytest.fixture(scope="session")

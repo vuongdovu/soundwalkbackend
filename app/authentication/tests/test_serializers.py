@@ -1246,8 +1246,8 @@ class TestRegisterSerializer:
         required for account recovery and communication.
         """
         data = {
-            "password": "SecurePass123!",
-            "password_confirm": "SecurePass123!"
+            "password1": "SecurePass123!",
+            "password2": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1262,8 +1262,8 @@ class TestRegisterSerializer:
         """
         data = {
             "email": "not-an-email",
-            "password": "SecurePass123!",
-            "password_confirm": "SecurePass123!"
+            "password1": "SecurePass123!",
+            "password2": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1278,8 +1278,8 @@ class TestRegisterSerializer:
         """
         data = {
             "email": user.email,
-            "password": "SecurePass123!",
-            "password_confirm": "SecurePass123!"
+            "password1": "SecurePass123!",
+            "password2": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1295,8 +1295,8 @@ class TestRegisterSerializer:
         """
         data = {
             "email": user.email.upper(),
-            "password": "SecurePass123!",
-            "password_confirm": "SecurePass123!"
+            "password1": "SecurePass123!",
+            "password2": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1311,8 +1311,8 @@ class TestRegisterSerializer:
         """
         data = {
             "email": "USER@EXAMPLE.COM",
-            "password": "SecurePass123!",
-            "password_confirm": "SecurePass123!"
+            "password1": "SecurePass123!",
+            "password2": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
@@ -1330,12 +1330,12 @@ class TestRegisterSerializer:
         authentication.
         """
         data = {
-            "email": "test@example.com",
-            "password_confirm": "SecurePass123!"
+            "email": "test_pwd_required@example.com",
+            "password2": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
-        assert "password" in serializer.errors
+        assert "password1" in serializer.errors
 
     def test_password_minimum_length(self, db):
         """
@@ -1345,13 +1345,13 @@ class TestRegisterSerializer:
         attacks. 8 characters is a common minimum requirement.
         """
         data = {
-            "email": "test@example.com",
-            "password": "short",
-            "password_confirm": "short"
+            "email": "test_pwd_minlen@example.com",
+            "password1": "short",
+            "password2": "short"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
-        assert "password" in serializer.errors
+        assert "password1" in serializer.errors
 
     def test_password_eight_chars_accepted(self, db):
         """
@@ -1361,9 +1361,9 @@ class TestRegisterSerializer:
         should be valid.
         """
         data = {
-            "email": "test@example.com",
-            "password": "12345678",
-            "password_confirm": "12345678"
+            "email": "test_pwd_8chars@example.com",
+            "password1": "12345678",
+            "password2": "12345678"
         }
         serializer = RegisterSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
@@ -1378,13 +1378,13 @@ class TestRegisterSerializer:
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
         # After validation, password should not appear in data representation
-        assert "password" not in serializer.data
+        assert "password1" not in serializer.data
 
     # -------------------------------------------------------------------------
     # Password Confirmation Tests
     # -------------------------------------------------------------------------
 
-    def test_password_confirm_required(self, db):
+    def test_password2_required(self, db):
         """
         Password confirmation field is required.
 
@@ -1392,14 +1392,14 @@ class TestRegisterSerializer:
         that would lock users out.
         """
         data = {
-            "email": "test@example.com",
-            "password": "SecurePass123!"
+            "email": "test_pwd2_required@example.com",
+            "password1": "SecurePass123!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
-        assert "password_confirm" in serializer.errors
+        assert "password2" in serializer.errors
 
-    def test_password_confirm_must_match(self, db):
+    def test_password2_must_match(self, db):
         """
         Password confirmation must match password.
 
@@ -1407,16 +1407,16 @@ class TestRegisterSerializer:
         that should be caught before account creation.
         """
         data = {
-            "email": "test@example.com",
-            "password": "SecurePass123!",
-            "password_confirm": "DifferentPass456!"
+            "email": "test_pwd2_mismatch@example.com",
+            "password1": "SecurePass123!",
+            "password2": "DifferentPass456!"
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
-        assert "password_confirm" in serializer.errors
-        assert "do not match" in str(serializer.errors["password_confirm"])
+        assert "password2" in serializer.errors
+        assert "do not match" in str(serializer.errors["password2"])
 
-    def test_password_confirm_is_write_only(self, db, valid_registration_data):
+    def test_password2_is_write_only(self, db, valid_registration_data):
         """
         Password confirmation does not appear in output.
 
@@ -1425,89 +1425,95 @@ class TestRegisterSerializer:
         """
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        assert "password_confirm" not in serializer.data
+        assert "password2" not in serializer.data
 
     # -------------------------------------------------------------------------
     # User Creation Tests
     # -------------------------------------------------------------------------
 
-    def test_create_returns_user_instance(self, db, valid_registration_data):
+    def test_create_returns_user_instance(self, db, valid_registration_data, mocker):
         """
-        create() method returns a User instance.
+        save() method returns a User instance.
 
         Why it matters: After successful registration, the serializer
         should return the created user for the view to use.
         """
+        mock_request = mocker.MagicMock()
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        user = serializer.save()
+        user = serializer.save(mock_request)
 
         assert isinstance(user, User)
         assert user.email == valid_registration_data["email"].lower()
 
-    def test_create_sets_password_correctly(self, db, valid_registration_data):
+    def test_create_sets_password_correctly(self, db, valid_registration_data, mocker):
         """
         Created user has correctly hashed password.
 
         Why it matters: Password should be hashed (not stored plaintext)
         and should validate against the original password.
         """
+        mock_request = mocker.MagicMock()
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        user = serializer.save()
+        user = serializer.save(mock_request)
 
-        assert user.check_password(valid_registration_data["password"])
+        assert user.check_password(valid_registration_data["password1"])
 
-    def test_create_creates_linked_account(self, db, valid_registration_data):
+    def test_create_creates_linked_account(self, db, valid_registration_data, mocker):
         """
         User creation also creates LinkedAccount for email provider.
 
         Why it matters: LinkedAccount tracks authentication methods.
         Email registration should create an email-type linked account.
         """
+        mock_request = mocker.MagicMock()
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        user = serializer.save()
+        user = serializer.save(mock_request)
 
         linked = user.linked_accounts.get(provider=LinkedAccount.Provider.EMAIL)
         assert linked.provider_user_id == user.email
 
-    def test_created_user_is_unverified(self, db, valid_registration_data):
+    def test_created_user_is_unverified(self, db, valid_registration_data, mocker):
         """
         Newly created user has email_verified=False.
 
         Why it matters: Users must verify their email before being
         considered fully authenticated.
         """
+        mock_request = mocker.MagicMock()
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        user = serializer.save()
+        user = serializer.save(mock_request)
 
         assert user.email_verified is False
 
-    def test_created_user_is_active(self, db, valid_registration_data):
+    def test_created_user_is_active(self, db, valid_registration_data, mocker):
         """
         Newly created user has is_active=True.
 
         Why it matters: New users should be able to log in immediately
         (though they may have limited access until verified).
         """
+        mock_request = mocker.MagicMock()
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        user = serializer.save()
+        user = serializer.save(mock_request)
 
         assert user.is_active is True
 
-    def test_created_user_has_profile(self, db, valid_registration_data):
+    def test_created_user_has_profile(self, db, valid_registration_data, mocker):
         """
         Newly created user has auto-created profile.
 
         Why it matters: Profile is created via signals when user is
         created, ensuring every user has a profile for consistency.
         """
+        mock_request = mocker.MagicMock()
         serializer = RegisterSerializer(data=valid_registration_data)
         assert serializer.is_valid()
-        user = serializer.save()
+        user = serializer.save(mock_request)
 
         # Profile should exist (created by signal)
         assert hasattr(user, "profile")

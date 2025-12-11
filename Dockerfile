@@ -90,9 +90,9 @@ COPY --chown=appuser:appgroup app/ /app/
 COPY --chown=appuser:appgroup scripts/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Create directories for static and media files
-RUN mkdir -p /app/staticfiles /app/media && \
-    chown -R appuser:appgroup /app/staticfiles /app/media
+# Create directories for static, media, and log files
+RUN mkdir -p /app/staticfiles /app/media /app/logs && \
+    chown -R appuser:appgroup /app/staticfiles /app/media /app/logs
 
 # Switch to non-root user
 USER appuser

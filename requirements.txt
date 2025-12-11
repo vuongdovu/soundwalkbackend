@@ -17,6 +17,7 @@ djangorestframework==3.16.1        # REST API framework (Django 5.2 support)
 dj-rest-auth[with_social]==7.0.1   # REST endpoints for auth (django-allauth>=64 support)
 django-allauth==65.3.0             # Social authentication (Google, Apple)
 djangorestframework-simplejwt==5.3.1  # JWT token authentication
+cryptography==44.0.0               # ECDSA signature verification for biometric auth
 
 # -----------------------------------------------------------------------------
 # Database
@@ -85,6 +86,6 @@ pytest-django==4.9.0               # Django integration for pytest
 pytest-cov==6.0.0                  # Coverage reporting
 factory-boy==3.3.1                 # Test data factories
 responses==0.25.3                  # HTTP mocking for OAuth tests
-freezegun==1.4.0                   # Time manipulation for token expiry tests
+freezegun==1.5.5                   # Time manipulation for token expiry tests (Python 3.14 support)
 pytest-mock==3.14.0                # Enhanced mocking utilities
 # ruff==0.8.4                       # Linting (optional)

@@ -33,7 +33,11 @@ db.sqlite3
 venv
 
 debug.log
-logs/*
+
+# Log files (keep directory via .gitkeep, ignore log contents)
+logs/*.log
+logs/*.log.*
+!logs/.gitkeep
 
 celerybeat-schedule
 celerybeat-schedule.*

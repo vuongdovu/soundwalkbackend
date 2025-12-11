@@ -14,6 +14,13 @@ URL structure:
     /api/v1/auth/google/              - Google OAuth2 login
     /api/v1/auth/apple/               - Apple Sign-In login
 
+    Biometric authentication (Face ID / Touch ID):
+    /api/v1/auth/biometric/enroll/       - Enroll public key (POST, auth required)
+    /api/v1/auth/biometric/challenge/    - Request challenge nonce (POST)
+    /api/v1/auth/biometric/authenticate/ - Authenticate with signature (POST)
+    /api/v1/auth/biometric/              - Disable biometric (DELETE, auth required)
+    /api/v1/auth/biometric/status/       - Check if enabled (GET)
+
 Note:
     The base auth URLs from dj-rest-auth are included in config/urls.py:
     - /api/v1/auth/login/
@@ -33,6 +40,11 @@ from authentication.views import (
     GoogleLoginView,
     ProfileView,
     ResendEmailView,
+    BiometricEnrollView,
+    BiometricChallengeView,
+    BiometricAuthenticateView,
+    BiometricDisableView,
+    BiometricStatusView,
 )
 
 app_name = "authentication"
@@ -52,4 +64,10 @@ urlpatterns = [
     ),
     # Account management
     path("deactivate/", DeactivateAccountView.as_view(), name="deactivate"),
+    # Biometric authentication (Face ID / Touch ID)
+    path("biometric/enroll/", BiometricEnrollView.as_view(), name="biometric-enroll"),
+    path("biometric/challenge/", BiometricChallengeView.as_view(), name="biometric-challenge"),
+    path("biometric/authenticate/", BiometricAuthenticateView.as_view(), name="biometric-authenticate"),
+    path("biometric/", BiometricDisableView.as_view(), name="biometric-disable"),
+    path("biometric/status/", BiometricStatusView.as_view(), name="biometric-status"),
 ]

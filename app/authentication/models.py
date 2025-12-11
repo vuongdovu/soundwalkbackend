@@ -262,6 +262,13 @@ class Profile(BaseModel):
     #     "email_frequency": "daily"
     # }
 
+    # Biometric authentication (Face ID / Touch ID)
+    bio_public_key = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Base64-encoded EC public key (DER format) for biometric auth",
+    )
+
     class Meta:
         db_table = "authentication_profile"
         verbose_name = "profile"

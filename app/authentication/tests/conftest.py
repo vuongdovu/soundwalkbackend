@@ -345,8 +345,8 @@ def valid_registration_data():
     """Valid data for user registration endpoint."""
     return {
         "email": "newuser@example.com",
-        "password": "SecurePass123!",
-        "password_confirm": "SecurePass123!"
+        "password1": "SecurePass123!",
+        "password2": "SecurePass123!"
     }
 
 

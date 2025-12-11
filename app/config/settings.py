@@ -397,6 +397,14 @@ DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@example.com")
 # =============================================================================
 LOG_LEVEL = env("LOG_LEVEL")
 
+# Log file name determined by service (web, celery-worker, celery-beat)
+# Set via LOG_FILE_NAME environment variable in docker-compose.yaml
+LOG_FILE_NAME = env("LOG_FILE_NAME", default="django.log")
+LOG_DIR = BASE_DIR / "logs"
+
+# Ensure log directory exists (handles local development without Docker)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -409,30 +417,47 @@ LOGGING = {
             "format": "{levelname} {message}",
             "style": "{",
         },
+        "file": {
+            # Detailed format for persistent logs with timestamp, level, logger name, and location
+            "format": "[{asctime}] {levelname} {name} {module}:{lineno} - {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
+        "file": {
+            # Rotating file handler prevents unbounded disk usage
+            # Max 10MB per file, keeps 5 backups (60MB total per log type)
+            "level": "DEBUG",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": LOG_DIR / LOG_FILE_NAME,
+            "maxBytes": 10 * 1024 * 1024,  # 10MB
+            "backupCount": 5,
+            "formatter": "file",
+            "encoding": "utf-8",
+        },
     },
     "root": {
-        "handlers": ["console"],
+        "handlers": ["console", "file"],
         "level": LOG_LEVEL,
     },
     "loggers": {
         "django": {
-            "handlers": ["console"],
+            "handlers": ["console", "file"],
             "level": LOG_LEVEL,
             "propagate": False,
         },
         "django.request": {
-            "handlers": ["console"],
+            "handlers": ["console", "file"],
             "level": "ERROR",
             "propagate": False,
         },
         "celery": {
-            "handlers": ["console"],
+            "handlers": ["console", "file"],
             "level": LOG_LEVEL,
             "propagate": False,
         },
