@@ -42,6 +42,10 @@ from authentication.serializers import (
     ProfileUpdateSerializer,
     LinkedAccountSerializer,
     RegisterSerializer,
+    BiometricEnrollSerializer,
+    BiometricChallengeRequestSerializer,
+    BiometricAuthenticateSerializer,
+    BiometricStatusSerializer,
 )
 from authentication.tests.factories import (
     UserFactory,
@@ -1515,3 +1519,433 @@ class TestRegisterSerializer:
         assert user.profile is not None
         # But username should be empty (requires profile completion)
         assert user.profile.username == ""
+
+
+# =============================================================================
+# BiometricEnrollSerializer Tests
+# =============================================================================
+
+
+class TestBiometricEnrollSerializer:
+    """
+    Tests for BiometricEnrollSerializer.
+
+    BiometricEnrollSerializer validates the public key format for Face ID/Touch ID
+    enrollment. It performs basic validation (base64 format, minimum length)
+    while detailed EC key validation is done in the service layer.
+    """
+
+    # -------------------------------------------------------------------------
+    # Public Key Validation Tests
+    # -------------------------------------------------------------------------
+
+    def test_valid_public_key_accepted(self, db, ec_key_pair):
+        """
+        Valid EC P-256 public key passes validation.
+
+        Why it matters: Users must be able to enroll with valid Secure Enclave keys.
+        """
+        serializer = BiometricEnrollSerializer(
+            data={"public_key": ec_key_pair["public_key_b64"]}
+        )
+        assert serializer.is_valid(), serializer.errors
+
+    def test_public_key_is_required(self, db):
+        """
+        Public key field is required.
+
+        Why it matters: Can't enroll without a key.
+        """
+        serializer = BiometricEnrollSerializer(data={})
+        assert not serializer.is_valid()
+        assert "public_key" in serializer.errors
+
+    def test_invalid_base64_rejected(self, db):
+        """
+        Non-base64 strings are rejected.
+
+        Why it matters: Malformed input should fail early in serializer.
+        """
+        serializer = BiometricEnrollSerializer(
+            data={"public_key": "not-valid-base64!!!"}
+        )
+        assert not serializer.is_valid()
+        assert "public_key" in serializer.errors
+        assert "base64" in str(serializer.errors["public_key"]).lower()
+
+    def test_too_short_key_rejected(self, db):
+        """
+        Public keys shorter than expected length are rejected.
+
+        Why it matters: EC P-256 public keys are ~91 bytes in DER format.
+        Much shorter values indicate invalid or truncated data.
+        """
+        import base64
+
+        # Valid base64 but too short for a real key
+        short_key = base64.b64encode(b"x" * 10).decode("ascii")
+        serializer = BiometricEnrollSerializer(data={"public_key": short_key})
+        assert not serializer.is_valid()
+        assert "public_key" in serializer.errors
+        assert "short" in str(serializer.errors["public_key"]).lower()
+
+    def test_empty_string_rejected(self, db):
+        """
+        Empty string is rejected.
+
+        Why it matters: Empty public key is invalid.
+        """
+        serializer = BiometricEnrollSerializer(data={"public_key": ""})
+        assert not serializer.is_valid()
+        assert "public_key" in serializer.errors
+
+    def test_valid_base64_passes_serializer_validation(self, db):
+        """
+        Valid base64 passes serializer validation (detailed check in service).
+
+        Why it matters: Serializer does basic validation; service does cryptographic
+        validation. This separation of concerns allows faster feedback for obvious errors.
+        """
+        import base64
+
+        # Valid base64, long enough, but not actually a valid EC key
+        # Serializer should accept it; service will reject it
+        fake_key = base64.b64encode(b"x" * 100).decode("ascii")
+        serializer = BiometricEnrollSerializer(data={"public_key": fake_key})
+        # Serializer accepts it (detailed validation in service)
+        assert serializer.is_valid(), serializer.errors
+
+    def test_validated_data_contains_public_key(self, db, ec_key_pair):
+        """
+        Validated data includes the public key value.
+
+        Why it matters: View needs to access the validated key for enrollment.
+        """
+        serializer = BiometricEnrollSerializer(
+            data={"public_key": ec_key_pair["public_key_b64"]}
+        )
+        assert serializer.is_valid()
+        assert serializer.validated_data["public_key"] == ec_key_pair["public_key_b64"]
+
+
+# =============================================================================
+# BiometricChallengeRequestSerializer Tests
+# =============================================================================
+
+
+class TestBiometricChallengeRequestSerializer:
+    """
+    Tests for BiometricChallengeRequestSerializer.
+
+    This serializer validates the email field for challenge requests.
+    It normalizes email to lowercase.
+    """
+
+    # -------------------------------------------------------------------------
+    # Email Validation Tests
+    # -------------------------------------------------------------------------
+
+    def test_valid_email_accepted(self, db):
+        """
+        Valid email format is accepted.
+
+        Why it matters: Users need to request challenges with their email.
+        """
+        serializer = BiometricChallengeRequestSerializer(
+            data={"email": "user@example.com"}
+        )
+        assert serializer.is_valid(), serializer.errors
+
+    def test_email_is_required(self, db):
+        """
+        Email field is required.
+
+        Why it matters: Can't create challenge without knowing the user.
+        """
+        serializer = BiometricChallengeRequestSerializer(data={})
+        assert not serializer.is_valid()
+        assert "email" in serializer.errors
+
+    def test_invalid_email_format_rejected(self, db):
+        """
+        Invalid email formats are rejected.
+
+        Why it matters: Invalid emails can't be looked up.
+        """
+        serializer = BiometricChallengeRequestSerializer(data={"email": "not-an-email"})
+        assert not serializer.is_valid()
+        assert "email" in serializer.errors
+
+    def test_email_normalized_to_lowercase(self, db):
+        """
+        Email is normalized to lowercase.
+
+        Why it matters: Case-insensitive email lookup requires normalization.
+        """
+        serializer = BiometricChallengeRequestSerializer(
+            data={"email": "USER@EXAMPLE.COM"}
+        )
+        assert serializer.is_valid()
+        assert serializer.validated_data["email"] == "user@example.com"
+
+    def test_email_whitespace_stripped(self, db):
+        """
+        Email has whitespace stripped.
+
+        Why it matters: Accidental whitespace from copy-paste shouldn't cause failures.
+        """
+        serializer = BiometricChallengeRequestSerializer(
+            data={"email": "  user@example.com  "}
+        )
+        assert serializer.is_valid()
+        assert serializer.validated_data["email"] == "user@example.com"
+
+    def test_empty_email_rejected(self, db):
+        """
+        Empty email string is rejected.
+
+        Why it matters: Empty email is invalid.
+        """
+        serializer = BiometricChallengeRequestSerializer(data={"email": ""})
+        assert not serializer.is_valid()
+        assert "email" in serializer.errors
+
+
+# =============================================================================
+# BiometricAuthenticateSerializer Tests
+# =============================================================================
+
+
+class TestBiometricAuthenticateSerializer:
+    """
+    Tests for BiometricAuthenticateSerializer.
+
+    This serializer validates the authentication request containing:
+    - email: User's email address (normalized to lowercase)
+    - challenge: The challenge nonce that was signed
+    - signature: Base64-encoded ECDSA signature
+    """
+
+    # -------------------------------------------------------------------------
+    # Required Fields Tests
+    # -------------------------------------------------------------------------
+
+    def test_all_fields_required(self, db):
+        """
+        All three fields (email, challenge, signature) are required.
+
+        Why it matters: Complete authentication requires all three components.
+        """
+        # Missing all
+        serializer = BiometricAuthenticateSerializer(data={})
+        assert not serializer.is_valid()
+        assert "email" in serializer.errors
+        assert "challenge" in serializer.errors
+        assert "signature" in serializer.errors
+
+    def test_missing_email_rejected(self, db):
+        """
+        Request without email is rejected.
+        """
+        serializer = BiometricAuthenticateSerializer(
+            data={"challenge": "abc123", "signature": "xyz789"}
+        )
+        assert not serializer.is_valid()
+        assert "email" in serializer.errors
+
+    def test_missing_challenge_rejected(self, db):
+        """
+        Request without challenge is rejected.
+        """
+        serializer = BiometricAuthenticateSerializer(
+            data={"email": "user@example.com", "signature": "xyz789"}
+        )
+        assert not serializer.is_valid()
+        assert "challenge" in serializer.errors
+
+    def test_missing_signature_rejected(self, db):
+        """
+        Request without signature is rejected.
+        """
+        serializer = BiometricAuthenticateSerializer(
+            data={"email": "user@example.com", "challenge": "abc123"}
+        )
+        assert not serializer.is_valid()
+        assert "signature" in serializer.errors
+
+    # -------------------------------------------------------------------------
+    # Email Validation Tests
+    # -------------------------------------------------------------------------
+
+    def test_valid_email_accepted(self, db):
+        """
+        Valid email with valid challenge and signature passes.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "user@example.com",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": base64.b64encode(b"y" * 70).decode("ascii"),
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+
+    def test_invalid_email_format_rejected(self, db):
+        """
+        Invalid email format is rejected.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "not-an-email",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": base64.b64encode(b"y" * 70).decode("ascii"),
+            }
+        )
+        assert not serializer.is_valid()
+        assert "email" in serializer.errors
+
+    def test_email_normalized_to_lowercase(self, db):
+        """
+        Email is normalized for consistent lookup.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "USER@EXAMPLE.COM",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": base64.b64encode(b"y" * 70).decode("ascii"),
+            }
+        )
+        assert serializer.is_valid()
+        assert serializer.validated_data["email"] == "user@example.com"
+
+    # -------------------------------------------------------------------------
+    # Signature Validation Tests
+    # -------------------------------------------------------------------------
+
+    def test_valid_base64_signature_accepted(self, db):
+        """
+        Valid base64-encoded signature passes validation.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "user@example.com",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": base64.b64encode(b"y" * 70).decode("ascii"),
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+
+    def test_invalid_base64_signature_rejected(self, db):
+        """
+        Non-base64 signature is rejected.
+
+        Why it matters: Signatures must be base64-encoded for transport.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "user@example.com",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": "not-valid-base64!!!",
+            }
+        )
+        assert not serializer.is_valid()
+        assert "signature" in serializer.errors
+        assert "base64" in str(serializer.errors["signature"]).lower()
+
+    def test_empty_signature_rejected(self, db):
+        """
+        Empty signature string is rejected.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "user@example.com",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": "",
+            }
+        )
+        assert not serializer.is_valid()
+        assert "signature" in serializer.errors
+
+    # -------------------------------------------------------------------------
+    # Challenge Validation Tests
+    # -------------------------------------------------------------------------
+
+    def test_challenge_accepted(self, db):
+        """
+        Challenge string is accepted.
+
+        Why it matters: Challenge is validated in service, not serializer.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "user@example.com",
+                "challenge": base64.b64encode(b"x" * 32).decode("ascii"),
+                "signature": base64.b64encode(b"y" * 70).decode("ascii"),
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+
+    def test_empty_challenge_rejected(self, db):
+        """
+        Empty challenge is rejected.
+        """
+        import base64
+
+        serializer = BiometricAuthenticateSerializer(
+            data={
+                "email": "user@example.com",
+                "challenge": "",
+                "signature": base64.b64encode(b"y" * 70).decode("ascii"),
+            }
+        )
+        assert not serializer.is_valid()
+        assert "challenge" in serializer.errors
+
+
+# =============================================================================
+# BiometricStatusSerializer Tests
+# =============================================================================
+
+
+class TestBiometricStatusSerializer:
+    """
+    Tests for BiometricStatusSerializer.
+
+    This serializer is for response serialization of biometric status checks.
+    It has a single boolean field: biometric_enabled.
+    """
+
+    def test_serializes_enabled_status(self, db):
+        """
+        Serializes biometric_enabled=True correctly.
+        """
+        serializer = BiometricStatusSerializer({"biometric_enabled": True})
+        assert serializer.data["biometric_enabled"] is True
+
+    def test_serializes_disabled_status(self, db):
+        """
+        Serializes biometric_enabled=False correctly.
+        """
+        serializer = BiometricStatusSerializer({"biometric_enabled": False})
+        assert serializer.data["biometric_enabled"] is False
+
+    def test_has_biometric_enabled_field(self, db):
+        """
+        Serializer has the expected field.
+        """
+        serializer = BiometricStatusSerializer({"biometric_enabled": True})
+        assert "biometric_enabled" in serializer.data

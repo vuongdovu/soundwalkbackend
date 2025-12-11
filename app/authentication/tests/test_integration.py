@@ -1319,3 +1319,728 @@ class TestTokenExpiry:
             used_at=timezone.now() - timedelta(minutes=30),
         )
         assert used_token.is_valid is False
+
+
+# =============================================================================
+# Biometric URL Constants
+# =============================================================================
+
+BIOMETRIC_ENROLL_URL = "/api/v1/auth/biometric/enroll/"
+BIOMETRIC_CHALLENGE_URL = "/api/v1/auth/biometric/challenge/"
+BIOMETRIC_AUTHENTICATE_URL = "/api/v1/auth/biometric/authenticate/"
+BIOMETRIC_STATUS_URL = "/api/v1/auth/biometric/status/"
+BIOMETRIC_DISABLE_URL = "/api/v1/auth/biometric/"
+
+
+# =============================================================================
+# TestBiometricEnrollmentFlow
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestBiometricEnrollmentFlow:
+    """
+    Complete biometric enrollment journey.
+
+    Tests the flow from enrollment to checking status:
+    1. Authenticated user enrolls public key
+    2. Status shows biometric enabled
+    3. User can disable biometric
+    4. Status shows biometric disabled
+    """
+
+    def test_full_enrollment_flow(
+        self, api_client, authenticated_client_factory, ec_key_pair
+    ):
+        """
+        Complete enrollment flow from start to enabled status.
+        """
+        # Create user and authenticated client
+        user = UserFactory(email_verified=True)
+        user.profile.username = "enrolluser"
+        user.profile.save()
+        client = authenticated_client_factory(user)
+
+        # Step 1: Check initial status - should be disabled
+        # ----------------------------------------------
+        response = api_client.get(f"{BIOMETRIC_STATUS_URL}?email={user.email}")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is False
+
+        # Step 2: Enroll biometric
+        # ------------------------
+        response = client.post(
+            BIOMETRIC_ENROLL_URL,
+            {"public_key": ec_key_pair["public_key_b64"]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert "enrolled_at" in response.data
+
+        # Step 3: Verify status is now enabled
+        # ------------------------------------
+        response = api_client.get(f"{BIOMETRIC_STATUS_URL}?email={user.email}")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is True
+
+        # Step 4: Verify database state
+        # -----------------------------
+        user.profile.refresh_from_db()
+        assert user.profile.bio_public_key == ec_key_pair["public_key_b64"]
+
+    def test_enrollment_requires_authentication(self, api_client, ec_key_pair):
+        """
+        Enrollment endpoint requires authentication.
+
+        Why it matters: Can't enroll biometric for anonymous users.
+        """
+        response = api_client.post(
+            BIOMETRIC_ENROLL_URL,
+            {"public_key": ec_key_pair["public_key_b64"]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_enrollment_with_invalid_key_returns_400(
+        self, authenticated_client, invalid_ec_public_key
+    ):
+        """
+        Invalid public key returns 400 Bad Request.
+
+        Why it matters: Users should get clear error messages for invalid keys.
+        """
+        response = authenticated_client.post(
+            BIOMETRIC_ENROLL_URL,
+            {"public_key": invalid_ec_public_key},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_enrollment_with_wrong_curve_returns_400(
+        self, authenticated_client, wrong_curve_public_key
+    ):
+        """
+        Public key on wrong curve returns 400 Bad Request.
+
+        Why it matters: Only P-256 keys from Secure Enclave are supported.
+        """
+        response = authenticated_client.post(
+            BIOMETRIC_ENROLL_URL,
+            {"public_key": wrong_curve_public_key},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_enrollment_missing_public_key_returns_400(self, authenticated_client):
+        """
+        Missing public key returns 400 Bad Request.
+        """
+        response = authenticated_client.post(
+            BIOMETRIC_ENROLL_URL,
+            {},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+# =============================================================================
+# TestBiometricAuthenticationFlow
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestBiometricAuthenticationFlow:
+    """
+    Complete biometric authentication journey.
+
+    Tests the flow from challenge request to JWT token issuance:
+    1. Request challenge nonce
+    2. Sign challenge with private key
+    3. Submit signature to authenticate
+    4. Receive JWT tokens
+    """
+
+    def test_full_authentication_flow(
+        self, api_client, user_with_biometric, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Complete biometric login from challenge to JWT token.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Step 1: Request challenge
+        # -------------------------
+        response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user_with_biometric.email},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "challenge" in response.data
+        assert "expires_in" in response.data
+
+        challenge = response.data["challenge"]
+
+        # Step 2: Sign challenge with private key
+        # ---------------------------------------
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # Step 3: Authenticate with signature
+        # -----------------------------------
+        response = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user_with_biometric.email,
+                "challenge": challenge,
+                "signature": signature,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "access" in response.data
+        assert "refresh" in response.data
+
+        # Step 4: Verify token works
+        # --------------------------
+        access_token = response.data["access"]
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+        profile_response = api_client.get(PROFILE_URL)
+        assert profile_response.status_code == status.HTTP_200_OK
+
+    def test_challenge_requires_biometric_enabled(
+        self, api_client, user_without_biometric, mock_redis_cache
+    ):
+        """
+        Challenge request fails if biometric not enabled.
+
+        Why it matters: Can't start auth flow without enrollment.
+        """
+        response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user_without_biometric.email},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data.get("error") == "biometric_not_enabled"
+
+    def test_challenge_for_nonexistent_user_returns_404(
+        self, api_client, mock_redis_cache
+    ):
+        """
+        Challenge for non-existent user returns 404.
+
+        Why it matters: Indicate biometric not available (same as not enabled).
+        """
+        response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": "nonexistent@example.com"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data.get("error") == "biometric_not_enabled"
+
+    def test_authenticate_with_invalid_signature_returns_401(
+        self, api_client, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Invalid signature returns 401 Unauthorized.
+
+        Why it matters: Failed verification is an authentication failure.
+        """
+        import base64
+
+        # Get a valid challenge
+        challenge_response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user_with_biometric.email},
+            format="json",
+        )
+        challenge = challenge_response.data["challenge"]
+
+        # Use bogus signature
+        bogus_signature = base64.b64encode(b"bogus" * 14).decode("ascii")
+
+        response = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user_with_biometric.email,
+                "challenge": challenge,
+                "signature": bogus_signature,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.data.get("error") == "invalid_signature"
+
+    def test_authenticate_with_expired_challenge_returns_401(
+        self, api_client, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Expired/invalid challenge returns 401 Unauthorized.
+
+        Why it matters: Challenges must be used within TTL.
+        """
+        import base64
+
+        # Use a fake challenge that was never stored
+        fake_challenge = base64.b64encode(b"x" * 32).decode("ascii")
+        fake_signature = base64.b64encode(b"y" * 70).decode("ascii")
+
+        response = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user_with_biometric.email,
+                "challenge": fake_challenge,
+                "signature": fake_signature,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.data.get("error") == "invalid_signature"
+
+    def test_challenge_is_single_use(
+        self, api_client, user_with_biometric, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Challenge can only be used once.
+
+        Why it matters: Prevents replay attacks.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Get challenge
+        challenge_response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user_with_biometric.email},
+            format="json",
+        )
+        challenge = challenge_response.data["challenge"]
+
+        # Sign challenge
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # First authentication succeeds
+        response1 = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user_with_biometric.email,
+                "challenge": challenge,
+                "signature": signature,
+            },
+            format="json",
+        )
+        assert response1.status_code == status.HTTP_200_OK
+
+        # Second authentication with same challenge fails
+        response2 = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user_with_biometric.email,
+                "challenge": challenge,
+                "signature": signature,
+            },
+            format="json",
+        )
+        assert response2.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response2.data.get("error") == "invalid_signature"
+
+    def test_authentication_for_deactivated_user_fails(
+        self, api_client, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Deactivated users cannot authenticate via biometric.
+
+        Why it matters: Security - deactivated accounts should be locked.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Create user with biometric
+        user = UserFactory(email_verified=True, is_active=True)
+        user.profile.username = "deactivatinguser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        # Get challenge while user is active
+        challenge_response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user.email},
+            format="json",
+        )
+        challenge = challenge_response.data["challenge"]
+
+        # Sign challenge
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # Deactivate user
+        user.is_active = False
+        user.save()
+
+        # Authentication should fail
+        response = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user.email,
+                "challenge": challenge,
+                "signature": signature,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.data.get("error") == "invalid_signature"
+
+
+# =============================================================================
+# TestBiometricStatusEndpoint
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestBiometricStatusEndpoint:
+    """
+    Tests for the biometric status check endpoint.
+
+    This endpoint allows clients to check if biometric is enabled
+    for a given email without requiring authentication.
+    """
+
+    def test_status_enabled_for_enrolled_user(self, api_client, user_with_biometric):
+        """
+        Returns enabled=True for user with biometric enrolled.
+        """
+        response = api_client.get(
+            f"{BIOMETRIC_STATUS_URL}?email={user_with_biometric.email}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is True
+
+    def test_status_disabled_for_unenrolled_user(
+        self, api_client, user_without_biometric
+    ):
+        """
+        Returns enabled=False for user without biometric.
+        """
+        response = api_client.get(
+            f"{BIOMETRIC_STATUS_URL}?email={user_without_biometric.email}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is False
+
+    def test_status_disabled_for_nonexistent_user(self, api_client, db):
+        """
+        Returns enabled=False for non-existent user (no enumeration).
+
+        Why it matters: Don't reveal whether email exists in system.
+        """
+        response = api_client.get(
+            f"{BIOMETRIC_STATUS_URL}?email=nonexistent@example.com"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is False
+
+    def test_status_requires_email_parameter(self, api_client, db):
+        """
+        Missing email parameter returns 400.
+        """
+        response = api_client.get(BIOMETRIC_STATUS_URL)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_status_normalizes_email_case(self, api_client, user_with_biometric):
+        """
+        Email lookup is case-insensitive.
+        """
+        response = api_client.get(
+            f"{BIOMETRIC_STATUS_URL}?email={user_with_biometric.email.upper()}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is True
+
+    def test_status_does_not_require_authentication(
+        self, api_client, user_with_biometric
+    ):
+        """
+        Status endpoint is public (no auth required).
+
+        Why it matters: App needs to check before showing Face ID option.
+        """
+        # Using unauthenticated client
+        response = api_client.get(
+            f"{BIOMETRIC_STATUS_URL}?email={user_with_biometric.email}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+
+# =============================================================================
+# TestBiometricDisableFlow
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestBiometricDisableFlow:
+    """
+    Tests for biometric disable functionality.
+
+    Users should be able to disable biometric authentication,
+    which clears their stored public key.
+    """
+
+    def test_disable_clears_biometric(
+        self, api_client, authenticated_client_factory, ec_key_pair
+    ):
+        """
+        Disabling biometric clears the public key.
+        """
+        # Create and enroll user
+        user = UserFactory(email_verified=True)
+        user.profile.username = "disableuser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        client = authenticated_client_factory(user)
+
+        # Verify biometric is enabled
+        assert user.profile.bio_public_key is not None
+
+        # Disable biometric
+        response = client.delete(BIOMETRIC_DISABLE_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+
+        # Verify biometric is disabled
+        user.profile.refresh_from_db()
+        assert user.profile.bio_public_key is None
+
+    def test_disable_requires_authentication(self, api_client):
+        """
+        Disable endpoint requires authentication.
+
+        Why it matters: Only authenticated user can disable their biometric.
+        """
+        response = api_client.delete(BIOMETRIC_DISABLE_URL)
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_disable_is_idempotent(self, authenticated_client_factory):
+        """
+        Disabling when already disabled returns success.
+
+        Why it matters: Multiple disable calls should be safe.
+        """
+        user = UserFactory(email_verified=True)
+        user.profile.username = "idempotentuser"
+        user.profile.bio_public_key = None
+        user.profile.save()
+
+        client = authenticated_client_factory(user)
+
+        response = client.delete(BIOMETRIC_DISABLE_URL)
+
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_disable_then_status_shows_disabled(
+        self, api_client, authenticated_client_factory, ec_key_pair
+    ):
+        """
+        After disabling, status endpoint shows disabled.
+        """
+        user = UserFactory(email_verified=True)
+        user.profile.username = "statusafteruser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        client = authenticated_client_factory(user)
+
+        # Disable biometric
+        client.delete(BIOMETRIC_DISABLE_URL)
+
+        # Check status
+        response = api_client.get(f"{BIOMETRIC_STATUS_URL}?email={user.email}")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["biometric_enabled"] is False
+
+    def test_disable_then_challenge_fails(
+        self, api_client, authenticated_client_factory, ec_key_pair, mock_redis_cache
+    ):
+        """
+        After disabling, challenge request fails.
+
+        Why it matters: Can't start auth flow without enrollment.
+        """
+        user = UserFactory(email_verified=True)
+        user.profile.username = "challengeafteruser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        client = authenticated_client_factory(user)
+
+        # Disable biometric
+        client.delete(BIOMETRIC_DISABLE_URL)
+
+        # Try to get challenge
+        response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user.email},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data.get("error") == "biometric_not_enabled"
+
+
+# =============================================================================
+# TestBiometricReEnrollmentFlow
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestBiometricReEnrollmentFlow:
+    """
+    Tests for re-enrollment scenarios (e.g., new device).
+
+    Users should be able to re-enroll with a new key pair,
+    which invalidates the old device's authentication.
+    """
+
+    def test_re_enrollment_replaces_key(
+        self, authenticated_client_factory, ec_key_pair
+    ):
+        """
+        Re-enrollment replaces the existing public key.
+        """
+        import base64
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+
+        user = UserFactory(email_verified=True)
+        user.profile.username = "reenrolluser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        client = authenticated_client_factory(user)
+
+        # Generate a new key pair
+        new_private_key = ec.generate_private_key(ec.SECP256R1())
+        new_public_key = new_private_key.public_key()
+        new_public_key_der = new_public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        new_public_key_b64 = base64.b64encode(new_public_key_der).decode("ascii")
+
+        # Re-enroll with new key
+        response = client.post(
+            BIOMETRIC_ENROLL_URL,
+            {"public_key": new_public_key_b64},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        # Verify new key is stored
+        user.profile.refresh_from_db()
+        assert user.profile.bio_public_key == new_public_key_b64
+        assert user.profile.bio_public_key != ec_key_pair["public_key_b64"]
+
+    def test_old_device_cannot_authenticate_after_re_enrollment(
+        self, api_client, authenticated_client_factory, ec_key_pair, mock_redis_cache
+    ):
+        """
+        After re-enrollment, old device's signatures are invalid.
+
+        Why it matters: Only the new device should work.
+        """
+        import base64
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization, hashes
+
+        user = UserFactory(email_verified=True)
+        user.profile.username = "olddeviceuser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        client = authenticated_client_factory(user)
+
+        # Generate a new key pair (simulating new device)
+        new_private_key = ec.generate_private_key(ec.SECP256R1())
+        new_public_key = new_private_key.public_key()
+        new_public_key_der = new_public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        new_public_key_b64 = base64.b64encode(new_public_key_der).decode("ascii")
+
+        # Re-enroll with new key
+        client.post(
+            BIOMETRIC_ENROLL_URL,
+            {"public_key": new_public_key_b64},
+            format="json",
+        )
+
+        # Try to authenticate with OLD key
+        challenge_response = api_client.post(
+            BIOMETRIC_CHALLENGE_URL,
+            {"email": user.email},
+            format="json",
+        )
+        challenge = challenge_response.data["challenge"]
+
+        # Sign with OLD private key
+        challenge_bytes = base64.b64decode(challenge)
+        old_signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        old_signature = base64.b64encode(old_signature_bytes).decode("ascii")
+
+        # Authentication with old key should fail
+        response = api_client.post(
+            BIOMETRIC_AUTHENTICATE_URL,
+            {
+                "email": user.email,
+                "challenge": challenge,
+                "signature": old_signature,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.data.get("error") == "invalid_signature"

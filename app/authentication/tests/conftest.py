@@ -396,3 +396,163 @@ def valid_usernames():
         "---",  # All hyphens
         "___",  # All underscores
     ]
+
+
+# =============================================================================
+# Biometric Authentication Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def ec_key_pair():
+    """
+    Generate a valid EC P-256 key pair for biometric testing.
+
+    Returns a dict with:
+        - private_key: EC private key object
+        - public_key: EC public key object
+        - public_key_b64: Base64-encoded DER public key (for API)
+        - private_key_b64: Base64-encoded DER private key (for signing)
+    """
+    import base64
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+
+    # Generate EC P-256 key pair
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+
+    # Export public key as DER and base64 encode
+    public_key_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    public_key_b64 = base64.b64encode(public_key_der).decode("ascii")
+
+    # Export private key as DER and base64 encode (for signing in tests)
+    private_key_der = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    private_key_b64 = base64.b64encode(private_key_der).decode("ascii")
+
+    return {
+        "private_key": private_key,
+        "public_key": public_key,
+        "public_key_b64": public_key_b64,
+        "private_key_b64": private_key_b64,
+    }
+
+
+@pytest.fixture
+def user_with_biometric(db, ec_key_pair):
+    """
+    Create a user with biometric authentication enabled.
+
+    The user has a valid EC P-256 public key stored in their profile.
+    """
+    user = UserFactory(email_verified=True)
+    user.profile.username = "biometricuser"
+    user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+    user.profile.save()
+    return user
+
+
+@pytest.fixture
+def user_without_biometric(db):
+    """
+    Create a verified user without biometric authentication enabled.
+
+    Used to test enrollment and status checks for users who haven't enrolled.
+    """
+    user = UserFactory(email_verified=True)
+    user.profile.username = "nobiometricuser"
+    user.profile.bio_public_key = None
+    user.profile.save()
+    return user
+
+
+@pytest.fixture
+def sign_challenge(ec_key_pair):
+    """
+    Factory fixture to sign challenges with the test key pair.
+
+    Returns a function that signs base64-encoded challenges and
+    returns base64-encoded signatures.
+    """
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    def _sign(challenge_b64: str) -> str:
+        """Sign a base64-encoded challenge and return base64-encoded signature."""
+        challenge_bytes = base64.b64decode(challenge_b64)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes,
+            ec.ECDSA(hashes.SHA256()),
+        )
+        return base64.b64encode(signature_bytes).decode("ascii")
+
+    return _sign
+
+
+@pytest.fixture
+def invalid_ec_public_key():
+    """Return an invalid public key for testing validation."""
+    import base64
+
+    # This is valid base64 but not a valid EC public key
+    return base64.b64encode(b"this is not a valid EC public key").decode("ascii")
+
+
+@pytest.fixture
+def wrong_curve_public_key():
+    """
+    Generate a public key on a different curve (P-384 instead of P-256).
+
+    Used to test that the service rejects keys on unsupported curves.
+    """
+    import base64
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+
+    # Generate EC P-384 key (wrong curve)
+    private_key = ec.generate_private_key(ec.SECP384R1())
+    public_key = private_key.public_key()
+
+    public_key_der = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return base64.b64encode(public_key_der).decode("ascii")
+
+
+@pytest.fixture
+def mock_redis_cache(mocker):
+    """
+    Mock Django's cache backend for biometric challenge tests.
+
+    Provides a simple dict-based cache for testing challenge storage.
+    """
+    cache_storage = {}
+
+    def mock_set(key, value, timeout=None):
+        cache_storage[key] = value
+
+    def mock_get(key, default=None):
+        return cache_storage.get(key, default)
+
+    def mock_delete(key):
+        cache_storage.pop(key, None)
+
+    mock_cache = mocker.MagicMock()
+    mock_cache.set = mock_set
+    mock_cache.get = mock_get
+    mock_cache.delete = mock_delete
+    mock_cache._storage = cache_storage  # Expose for test assertions
+
+    mocker.patch(
+        "authentication.services.BiometricService._get_cache", return_value=mock_cache
+    )
+    return mock_cache

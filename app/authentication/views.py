@@ -72,6 +72,14 @@ from authentication.services import AuthService, BiometricService
 # =============================================================================
 
 
+@extend_schema(
+    summary="Sign in with Google",
+    description=(
+        "Authenticate using a Google OAuth2 token. For mobile apps, use the id_token "
+        "from Google Sign-In SDK. For web apps, use the authorization code flow."
+    ),
+    tags=["Auth"],
+)
 class GoogleLoginView(SocialLoginView):
     """
     API view for Google OAuth2 authentication.
@@ -108,6 +116,14 @@ class GoogleLoginView(SocialLoginView):
     adapter_class = GoogleOAuth2Adapter
 
 
+@extend_schema(
+    summary="Sign in with Apple",
+    description=(
+        "Authenticate using Apple Sign-In. Apple only sends the user's name on the "
+        "first authentication, so it's captured and stored at that time."
+    ),
+    tags=["Auth"],
+)
 class AppleLoginView(SocialLoginView):
     """
     API view for Apple Sign-In authentication.
@@ -174,6 +190,12 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    @extend_schema(
+        summary="Get current user's profile",
+        description="Retrieve profile data including completion status.",
+        tags=["Auth - Profile"],
+        responses={200: ProfileSerializer},
+    )
     def get(self, request):
         """
         Retrieve the current user's profile.
@@ -186,6 +208,15 @@ class ProfileView(APIView):
         serializer = ProfileSerializer(profile, context={"request": request})
         return Response(serializer.data)
 
+    @extend_schema(
+        summary="Update profile",
+        description=(
+            "Full profile update. Username is required if not previously set."
+        ),
+        tags=["Auth - Profile"],
+        request=ProfileUpdateSerializer,
+        responses={200: ProfileSerializer},
+    )
     def put(self, request):
         """
         Update the current user's profile (full update).
@@ -205,6 +236,15 @@ class ProfileView(APIView):
         """
         return self._update_profile(request, partial=False)
 
+    @extend_schema(
+        summary="Partially update profile",
+        description=(
+            "Partial profile update. Username is required if not previously set."
+        ),
+        tags=["Auth - Profile"],
+        request=ProfileUpdateSerializer,
+        responses={200: ProfileSerializer},
+    )
     def patch(self, request):
         """
         Partially update the current user's profile.
@@ -255,6 +295,11 @@ class EmailVerificationView(APIView):
 
     permission_classes = []  # No authentication required
 
+    @extend_schema(
+        summary="Verify email address",
+        description="Verify the user's email using the token sent to their inbox.",
+        tags=["Auth"],
+    )
     def post(self, request):
         """
         Verify email address with token.
@@ -292,6 +337,11 @@ class ResendEmailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Resend verification email",
+        description="Send a new verification email to the current user.",
+        tags=["Auth"],
+    )
     def post(self, request):
         """
         Resend verification email to current user.
@@ -320,6 +370,14 @@ class DeactivateAccountView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary="Deactivate account",
+        description=(
+            "Soft-delete the current user's account. The account can be "
+            "reactivated by an admin if needed."
+        ),
+        tags=["Auth"],
+    )
     def post(self, request):
         """
         Deactivate the current user's account.

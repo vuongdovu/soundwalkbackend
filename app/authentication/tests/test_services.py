@@ -49,7 +49,7 @@ from authentication.models import (
     EmailVerificationToken,
     RESERVED_USERNAMES,
 )
-from authentication.services import AuthService
+from authentication.services import AuthService, BiometricService
 from authentication.tests.factories import (
     UserFactory,
     EmailVerificationTokenFactory,
@@ -1645,3 +1645,687 @@ class TestUpdateProfile:
         # Reload from database
         profile = Profile.objects.get(user=user)
         assert profile.first_name == "Persisted"
+
+
+# =============================================================================
+# TestBiometricEnroll
+# =============================================================================
+
+
+class TestBiometricEnroll:
+    """
+    Tests for BiometricService.enroll().
+
+    This method stores the user's EC P-256 public key for Face ID/Touch ID
+    authentication. The public key is generated in the iOS Secure Enclave
+    with biometric protection.
+    """
+
+    def test_enroll_stores_valid_public_key(self, db, user, ec_key_pair):
+        """
+        Successfully enrolls biometric with valid EC P-256 public key.
+
+        Why it matters: This is the happy path for biometric enrollment.
+        Users must be able to store their Secure Enclave public key.
+        """
+        BiometricService.enroll(user, ec_key_pair["public_key_b64"])
+
+        user.profile.refresh_from_db()
+        assert user.profile.bio_public_key == ec_key_pair["public_key_b64"]
+
+    def test_enroll_creates_profile_if_missing(self, db, ec_key_pair):
+        """
+        Enroll creates profile if user doesn't have one.
+
+        Why it matters: Handles edge case where profile signal didn't fire.
+        """
+        user = User.objects.create_user(
+            email="noprofile@example.com", password="TestPass123!"
+        )
+        Profile.objects.filter(user=user).delete()
+
+        BiometricService.enroll(user, ec_key_pair["public_key_b64"])
+
+        assert Profile.objects.filter(user=user).exists()
+        assert user.profile.bio_public_key == ec_key_pair["public_key_b64"]
+
+    def test_enroll_overwrites_existing_key(self, db, user_with_biometric, ec_key_pair):
+        """
+        Enrolling overwrites any existing public key (single device).
+
+        Why it matters: Users can re-enroll when they get a new device.
+        The old key is replaced, effectively disabling the old device.
+        """
+        # Generate a new key pair
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives import serialization
+        import base64
+
+        new_private_key = ec.generate_private_key(ec.SECP256R1())
+        new_public_key = new_private_key.public_key()
+        new_public_key_der = new_public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        new_public_key_b64 = base64.b64encode(new_public_key_der).decode("ascii")
+
+        old_key = user_with_biometric.profile.bio_public_key
+
+        BiometricService.enroll(user_with_biometric, new_public_key_b64)
+
+        user_with_biometric.profile.refresh_from_db()
+        assert user_with_biometric.profile.bio_public_key == new_public_key_b64
+        assert user_with_biometric.profile.bio_public_key != old_key
+
+    def test_enroll_raises_value_error_for_invalid_key(
+        self, db, user, invalid_ec_public_key
+    ):
+        """
+        Raises ValueError when public key is not a valid EC key.
+
+        Why it matters: Invalid keys must be rejected to prevent authentication
+        failures later.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.enroll(user, invalid_ec_public_key)
+
+        assert "Invalid public key" in str(exc_info.value) or "Failed to parse" in str(
+            exc_info.value
+        )
+
+    def test_enroll_raises_value_error_for_wrong_curve(
+        self, db, user, wrong_curve_public_key
+    ):
+        """
+        Raises ValueError when public key uses wrong curve (not P-256).
+
+        Why it matters: iOS Secure Enclave generates P-256 keys. Other curves
+        indicate a potentially malicious or misconfigured client.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.enroll(user, wrong_curve_public_key)
+
+        assert (
+            "P-256" in str(exc_info.value) or "secp256r1" in str(exc_info.value).lower()
+        )
+
+    def test_enroll_raises_value_error_for_invalid_base64(self, db, user):
+        """
+        Raises ValueError when public key is not valid base64.
+
+        Why it matters: Malformed input must be rejected early.
+        """
+        with pytest.raises(ValueError):
+            BiometricService.enroll(user, "not-valid-base64!!!")
+
+    def test_enroll_raises_value_error_for_empty_key(self, db, user):
+        """
+        Raises ValueError when public key is empty.
+
+        Why it matters: Empty keys must be rejected.
+        """
+        with pytest.raises(ValueError):
+            BiometricService.enroll(user, "")
+
+
+# =============================================================================
+# TestBiometricValidatePublicKey
+# =============================================================================
+
+
+class TestBiometricValidatePublicKey:
+    """
+    Tests for BiometricService._validate_public_key().
+
+    This internal method validates that a public key is a valid EC P-256 key.
+    """
+
+    def test_validates_valid_p256_key(self, db, ec_key_pair):
+        """
+        Accepts valid EC P-256 public key.
+
+        Why it matters: Valid keys from iOS Secure Enclave must be accepted.
+        """
+        # Should not raise
+        BiometricService._validate_public_key(ec_key_pair["public_key_b64"])
+
+    def test_rejects_non_ec_key(self, db):
+        """
+        Rejects keys that are not elliptic curve keys.
+
+        Why it matters: RSA or other key types are not supported.
+        """
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+        import base64
+
+        # Generate RSA key
+        rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        rsa_public_key = rsa_key.public_key()
+        rsa_public_der = rsa_public_key.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        rsa_public_b64 = base64.b64encode(rsa_public_der).decode("ascii")
+
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService._validate_public_key(rsa_public_b64)
+
+        assert "elliptic curve" in str(exc_info.value).lower()
+
+    def test_rejects_wrong_curve(self, db, wrong_curve_public_key):
+        """
+        Rejects EC keys on curves other than P-256.
+
+        Why it matters: Only P-256 is supported (Secure Enclave standard).
+        """
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService._validate_public_key(wrong_curve_public_key)
+
+        assert (
+            "P-256" in str(exc_info.value) or "secp256r1" in str(exc_info.value).lower()
+        )
+
+    def test_rejects_invalid_base64(self, db):
+        """
+        Rejects strings that are not valid base64.
+        """
+        with pytest.raises(ValueError):
+            BiometricService._validate_public_key("not-valid-base64!!!")
+
+    def test_rejects_truncated_key(self, db, ec_key_pair):
+        """
+        Rejects truncated/corrupted key data.
+
+        Why it matters: Partial key data could cause cryptographic failures.
+        """
+        truncated = ec_key_pair["public_key_b64"][:20]
+        with pytest.raises(ValueError):
+            BiometricService._validate_public_key(truncated)
+
+
+# =============================================================================
+# TestBiometricCheckStatus
+# =============================================================================
+
+
+class TestBiometricCheckStatus:
+    """
+    Tests for BiometricService.check_status().
+
+    This method checks if a user has biometric authentication enabled.
+    It returns False for non-existent users to prevent user enumeration.
+    """
+
+    def test_returns_true_when_biometric_enabled(self, db, user_with_biometric):
+        """
+        Returns True when user has public key stored.
+
+        Why it matters: Frontend needs to know whether to show Face ID option.
+        """
+        result = BiometricService.check_status(user_with_biometric.email)
+
+        assert result is True
+
+    def test_returns_false_when_biometric_disabled(self, db, user_without_biometric):
+        """
+        Returns False when user has no public key.
+
+        Why it matters: Users without biometric shouldn't see Face ID option.
+        """
+        result = BiometricService.check_status(user_without_biometric.email)
+
+        assert result is False
+
+    def test_returns_false_for_nonexistent_user(self, db):
+        """
+        Returns False for non-existent user (no user enumeration).
+
+        Why it matters: Security requirement - don't reveal whether email exists.
+        """
+        result = BiometricService.check_status("nonexistent@example.com")
+
+        assert result is False
+
+    def test_normalizes_email_to_lowercase(self, db, user_with_biometric):
+        """
+        Email is normalized for lookup.
+
+        Why it matters: Case differences shouldn't affect biometric status.
+        """
+        result = BiometricService.check_status(user_with_biometric.email.upper())
+
+        assert result is True
+
+    def test_returns_false_when_public_key_is_empty_string(self, db, user):
+        """
+        Returns False when public key is empty string (not None).
+
+        Why it matters: Both None and empty string should be treated as disabled.
+        """
+        user.profile.bio_public_key = ""
+        user.profile.save()
+
+        result = BiometricService.check_status(user.email)
+
+        assert result is False
+
+
+# =============================================================================
+# TestBiometricDisable
+# =============================================================================
+
+
+class TestBiometricDisable:
+    """
+    Tests for BiometricService.disable().
+
+    This method clears the stored public key, requiring re-enrollment
+    to use biometrics again.
+    """
+
+    def test_clears_public_key(self, db, user_with_biometric):
+        """
+        Successfully clears the stored public key.
+
+        Why it matters: Users must be able to disable biometric auth.
+        """
+        assert user_with_biometric.profile.bio_public_key is not None
+
+        BiometricService.disable(user_with_biometric)
+
+        user_with_biometric.profile.refresh_from_db()
+        assert user_with_biometric.profile.bio_public_key is None
+
+    def test_disable_is_idempotent(self, db, user_without_biometric):
+        """
+        Disabling when already disabled doesn't raise error.
+
+        Why it matters: Multiple disable calls should be safe.
+        """
+        # Should not raise
+        BiometricService.disable(user_without_biometric)
+
+        user_without_biometric.profile.refresh_from_db()
+        assert user_without_biometric.profile.bio_public_key is None
+
+    def test_disable_on_fresh_profile_is_safe(self, db):
+        """
+        Disable works on fresh profile with no bio_public_key set.
+
+        Why it matters: Edge case - shouldn't crash on fresh profiles.
+        Note: Profiles are auto-created by signal, so missing profile
+        is not a valid scenario in practice.
+        """
+        user = User.objects.create_user(
+            email="fresh@example.com", password="TestPass123!"
+        )
+        # Fresh profile has no bio_public_key - this should not raise
+        assert user.profile.bio_public_key is None
+
+        BiometricService.disable(user)
+
+        # Should remain None
+        user.profile.refresh_from_db()
+        assert user.profile.bio_public_key is None
+
+
+# =============================================================================
+# TestBiometricCreateChallenge
+# =============================================================================
+
+
+class TestBiometricCreateChallenge:
+    """
+    Tests for BiometricService.create_challenge().
+
+    This method generates a cryptographically secure challenge nonce
+    and stores it in Redis with a 5-minute TTL.
+    """
+
+    def test_creates_challenge_for_enrolled_user(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Successfully creates challenge for user with biometric enabled.
+
+        Why it matters: Challenge is required for biometric authentication.
+        """
+        result = BiometricService.create_challenge(user_with_biometric.email)
+
+        assert "challenge" in result
+        assert "expires_in" in result
+        assert result["expires_in"] == BiometricService.CHALLENGE_TTL_SECONDS
+
+    def test_challenge_is_base64_encoded(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Challenge is valid base64 string.
+
+        Why it matters: Challenge must be signable by the client.
+        """
+        import base64
+
+        result = BiometricService.create_challenge(user_with_biometric.email)
+
+        # Should not raise - valid base64
+        decoded = base64.b64decode(result["challenge"])
+        # Should be 32 bytes (256 bits)
+        assert len(decoded) == 32
+
+    def test_challenge_stored_in_cache(self, db, user_with_biometric, mock_redis_cache):
+        """
+        Challenge is stored in cache with user ID.
+
+        Why it matters: Challenge must be retrievable for verification.
+        """
+        result = BiometricService.create_challenge(user_with_biometric.email)
+
+        # Check that something was stored in cache
+        expected_key = f"{BiometricService.CHALLENGE_KEY_PREFIX}:{user_with_biometric.email}:{result['challenge']}"
+        assert expected_key in mock_redis_cache._storage
+        assert mock_redis_cache._storage[expected_key] == user_with_biometric.id
+
+    def test_raises_value_error_for_nonexistent_user(self, db, mock_redis_cache):
+        """
+        Raises ValueError when user doesn't exist.
+
+        Why it matters: Can't create challenge for non-existent user.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.create_challenge("nonexistent@example.com")
+
+        assert "not found" in str(exc_info.value).lower()
+
+    def test_raises_value_error_when_biometric_not_enabled(
+        self, db, user_without_biometric, mock_redis_cache
+    ):
+        """
+        Raises ValueError when user hasn't enrolled biometric.
+
+        Why it matters: Can't authenticate without public key.
+        """
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.create_challenge(user_without_biometric.email)
+
+        assert "not enabled" in str(exc_info.value).lower()
+
+    def test_normalizes_email_to_lowercase(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Email is normalized for user lookup.
+
+        Why it matters: Case shouldn't affect challenge creation.
+        """
+        result = BiometricService.create_challenge(user_with_biometric.email.upper())
+
+        assert "challenge" in result
+
+    def test_generates_unique_challenges(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Each call generates a unique challenge.
+
+        Why it matters: Challenges must be unique to prevent replay attacks.
+        """
+        result1 = BiometricService.create_challenge(user_with_biometric.email)
+        result2 = BiometricService.create_challenge(user_with_biometric.email)
+
+        assert result1["challenge"] != result2["challenge"]
+
+
+# =============================================================================
+# TestBiometricAuthenticate
+# =============================================================================
+
+
+class TestBiometricAuthenticate:
+    """
+    Tests for BiometricService.authenticate().
+
+    This method verifies the ECDSA signature of a challenge using the
+    user's stored public key. On success, it returns the authenticated user.
+    """
+
+    def test_authenticates_with_valid_signature(
+        self, db, user_with_biometric, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Successfully authenticates with valid signature.
+
+        Why it matters: This is the happy path for biometric login.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Create challenge
+        challenge_result = BiometricService.create_challenge(user_with_biometric.email)
+        challenge = challenge_result["challenge"]
+
+        # Sign challenge with private key
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # Authenticate
+        result = BiometricService.authenticate(
+            email=user_with_biometric.email,
+            challenge=challenge,
+            signature=signature,
+        )
+
+        assert result == user_with_biometric
+
+    def test_raises_value_error_for_invalid_signature(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Raises ValueError when signature doesn't verify.
+
+        Why it matters: Invalid signatures must be rejected.
+        """
+        import base64
+
+        # Create challenge
+        challenge_result = BiometricService.create_challenge(user_with_biometric.email)
+
+        # Use a bogus signature
+        bogus_signature = base64.b64encode(b"x" * 70).decode("ascii")
+
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.authenticate(
+                email=user_with_biometric.email,
+                challenge=challenge_result["challenge"],
+                signature=bogus_signature,
+            )
+
+        assert (
+            "invalid" in str(exc_info.value).lower()
+            or "signature" in str(exc_info.value).lower()
+        )
+
+    def test_raises_value_error_for_expired_challenge(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Raises ValueError when challenge has expired or doesn't exist.
+
+        Why it matters: Expired challenges shouldn't work.
+        """
+        import base64
+
+        # Create a challenge that doesn't exist in cache
+        fake_challenge = base64.b64encode(b"x" * 32).decode("ascii")
+        fake_signature = base64.b64encode(b"y" * 70).decode("ascii")
+
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.authenticate(
+                email=user_with_biometric.email,
+                challenge=fake_challenge,
+                signature=fake_signature,
+            )
+
+        assert (
+            "invalid" in str(exc_info.value).lower()
+            or "expired" in str(exc_info.value).lower()
+        )
+
+    def test_challenge_is_single_use(
+        self, db, user_with_biometric, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Challenge is deleted after verification (success or failure).
+
+        Why it matters: Prevents replay attacks.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Create challenge
+        challenge_result = BiometricService.create_challenge(user_with_biometric.email)
+        challenge = challenge_result["challenge"]
+
+        # Sign and authenticate
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # First authentication succeeds
+        BiometricService.authenticate(
+            email=user_with_biometric.email,
+            challenge=challenge,
+            signature=signature,
+        )
+
+        # Second authentication with same challenge fails
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.authenticate(
+                email=user_with_biometric.email,
+                challenge=challenge,
+                signature=signature,
+            )
+
+        assert (
+            "invalid" in str(exc_info.value).lower()
+            or "expired" in str(exc_info.value).lower()
+        )
+
+    def test_raises_value_error_for_deactivated_user(
+        self, db, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Raises ValueError when user account is deactivated.
+
+        Why it matters: Deactivated users shouldn't be able to authenticate.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Create user with biometric
+        user = UserFactory(email_verified=True, is_active=True)
+        user.profile.username = "deactivateduser"
+        user.profile.bio_public_key = ec_key_pair["public_key_b64"]
+        user.profile.save()
+
+        # Create challenge while user is active
+        challenge_result = BiometricService.create_challenge(user.email)
+        challenge = challenge_result["challenge"]
+
+        # Sign challenge
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # Deactivate user
+        user.is_active = False
+        user.save()
+
+        # Authentication should fail
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.authenticate(
+                email=user.email,
+                challenge=challenge,
+                signature=signature,
+            )
+
+        assert "deactivated" in str(exc_info.value).lower()
+
+    def test_normalizes_email_for_cache_lookup(
+        self, db, user_with_biometric, ec_key_pair, mock_redis_cache
+    ):
+        """
+        Email is normalized for challenge lookup.
+
+        Why it matters: Case shouldn't affect authentication.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Create challenge with lowercase email
+        challenge_result = BiometricService.create_challenge(user_with_biometric.email)
+        challenge = challenge_result["challenge"]
+
+        # Sign challenge
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = ec_key_pair["private_key"].sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        # Authenticate with uppercase email
+        result = BiometricService.authenticate(
+            email=user_with_biometric.email.upper(),
+            challenge=challenge,
+            signature=signature,
+        )
+
+        assert result == user_with_biometric
+
+    def test_signature_with_wrong_key_fails(
+        self, db, user_with_biometric, mock_redis_cache
+    ):
+        """
+        Signature from different key pair fails.
+
+        Why it matters: Only the enrolled device should authenticate.
+        """
+        import base64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        # Create challenge
+        challenge_result = BiometricService.create_challenge(user_with_biometric.email)
+        challenge = challenge_result["challenge"]
+
+        # Sign with a DIFFERENT private key
+        different_private_key = ec.generate_private_key(ec.SECP256R1())
+        challenge_bytes = base64.b64decode(challenge)
+        signature_bytes = different_private_key.sign(
+            challenge_bytes, ec.ECDSA(hashes.SHA256())
+        )
+        signature = base64.b64encode(signature_bytes).decode("ascii")
+
+        with pytest.raises(ValueError) as exc_info:
+            BiometricService.authenticate(
+                email=user_with_biometric.email,
+                challenge=challenge,
+                signature=signature,
+            )
+
+        assert (
+            "invalid" in str(exc_info.value).lower()
+            or "signature" in str(exc_info.value).lower()
+        )
