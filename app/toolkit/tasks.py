@@ -1,5 +1,5 @@
 """
-Celery tasks for utils app.
+Celery tasks for toolkit app.
 
 This module defines async tasks for:
 - Email sending
@@ -7,7 +7,7 @@ This module defines async tasks for:
 - External service health checks
 
 Usage:
-    from utils.tasks import send_email_task
+    from toolkit.tasks import send_email_task
     send_email_task.delay(to="user@example.com", subject="Hello", ...)
 """
 
@@ -45,7 +45,7 @@ def send_email_task(
     Returns:
         True if email was sent successfully
     """
-    from utils.services.email import EmailService
+    from toolkit.services.email import EmailService
 
     try:
         success = EmailService.send(

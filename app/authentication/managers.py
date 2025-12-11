@@ -22,13 +22,15 @@ class UserManager(BaseUserManager):
     This manager provides methods for creating regular users and superusers
     using email instead of username as the primary identifier.
 
+    Note:
+        Profile data (first_name, last_name, etc.) should be set on the
+        Profile model, not on User. Profile is auto-created via signals.
+
     Usage:
         # Create a regular user
         user = User.objects.create_user(
             email='user@example.com',
-            password='securepassword',
-            first_name='John',
-            last_name='Doe'
+            password='securepassword'
         )
 
         # Create a superuser
@@ -41,6 +43,8 @@ class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         """
         Create and save a regular user with the given email and password.
+
+        Note: first_name/last_name should be set on Profile, not User.
 
         Args:
             email: User's email address (required)
@@ -62,6 +66,11 @@ class UserManager(BaseUserManager):
         # Set default values for required fields
         extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
+
+        # Remove any profile-related fields that might be passed
+        # These belong on the Profile model, not User
+        extra_fields.pop("first_name", None)
+        extra_fields.pop("last_name", None)
 
         # Create the user instance
         user = self.model(email=email, **extra_fields)

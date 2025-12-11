@@ -74,8 +74,12 @@ docker-compose up -d $BUILD_FLAG
 # Wait a moment for services to start
 sleep 3
 
+# Make migrations (detect model changes)
+echo -e "\n${BLUE}Checking for model changes...${NC}"
+docker-compose exec -T web python manage.py makemigrations --noinput
+
 # Run migrations
-echo -e "\n${BLUE}Running database migrations...${NC}"
+echo -e "${BLUE}Applying database migrations...${NC}"
 docker-compose exec -T web python manage.py migrate --noinput
 
 echo -e "${GREEN}Migrations completed${NC}"

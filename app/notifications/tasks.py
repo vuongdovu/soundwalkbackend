@@ -170,7 +170,7 @@ def send_email_notification(
     """
     # TODO: Implement
     # from django.contrib.auth import get_user_model
-    # from utils.services.email import EmailService
+    # from toolkit.services.email import EmailService
     #
     # User = get_user_model()
     # try:

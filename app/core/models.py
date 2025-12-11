@@ -1,10 +1,35 @@
 """
-Core models providing base functionality for all domain models.
+Core base model providing common functionality for all domain models.
 
-This module contains abstract base classes that should be inherited by all
+This module contains the abstract base class that should be inherited by all
 domain models in the application. Following the skeleton project rules,
-these are generic infrastructure classes with no domain-specific logic.
+this is a generic infrastructure class with no domain-specific logic.
+
+Base Classes:
+    BaseModel: Abstract model with timestamps (created_at, updated_at)
+
+For mixins (UUIDPrimaryKeyMixin, SoftDeleteMixin, SlugMixin, etc.),
+see core.model_mixins.
+
+Usage:
+    from core.models import BaseModel
+    from core.model_mixins import SoftDeleteMixin, UUIDPrimaryKeyMixin
+
+    # Basic model with timestamps
+    class Article(BaseModel):
+        title = models.CharField(max_length=200)
+
+    # Model with UUID primary key and soft delete
+    class Document(UUIDPrimaryKeyMixin, SoftDeleteMixin, BaseModel):
+        name = models.CharField(max_length=100)
+
+Note:
+    - Always list mixins before BaseModel in inheritance
+    - Mixins are in core.model_mixins
+    - ViewSet mixins are in core.viewset_mixins
 """
+
+from __future__ import annotations
 
 from django.db import models
 
@@ -45,6 +70,6 @@ class BaseModel(models.Model):
         # Default ordering by creation time (newest first)
         ordering = ["-created_at"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Default string representation using primary key."""
         return f"{self.__class__.__name__}(id={self.pk})"

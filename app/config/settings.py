@@ -93,7 +93,7 @@ INSTALLED_APPS = [
     "notifications",
     "chat",
     "ai",
-    "utils",
+    "toolkit",
 ]
 
 MIDDLEWARE = [
@@ -232,13 +232,17 @@ if DEBUG:
     )
 
 # =============================================================================
-# drf-spectacular (OpenAPI/Swagger) Configuration
+# drf-spectacular (OpenAPI) Configuration
 # =============================================================================
 SPECTACULAR_SETTINGS = {
     "TITLE": "API Documentation",
-    "DESCRIPTION": "REST API documentation with interactive Swagger UI",
+    "DESCRIPTION": "REST API documentation",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
+    # Strip /api/v1 prefix from operation IDs (e.g., auth_login instead of api_v1_auth_login)
+    "SCHEMA_PATH_PREFIX": r"/api/v[0-9]+",
+    # Group auth endpoints (User, Profile, Auth) in documentation
+    "POSTPROCESSING_HOOKS": ["core.openapi.group_auth_endpoints"],
     # Authentication schemes
     "SECURITY": [{"Bearer": []}],
     "APPEND_COMPONENTS": {

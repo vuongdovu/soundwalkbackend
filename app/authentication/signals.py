@@ -3,12 +3,14 @@ Django signals for authentication.
 
 This module defines signal handlers for:
 - Auto-creating Profile when User is created
+- Populating Profile from social login data
 - Sending verification email on registration
 - Logging authentication events
 
 Related files:
-    - models.py: User and Profile models
+    - models.py: User, Profile, and LinkedAccount models
     - apps.py: Signal import in ready()
+    - adapters.py: Sets extra_data with name info for social logins
 
 Usage:
     Signals are automatically connected when the app is ready.
@@ -30,7 +32,8 @@ def create_user_profile(sender, instance, created, **kwargs):
     Create a Profile for newly created users.
 
     This signal handler automatically creates a Profile instance
-    whenever a new User is created.
+    whenever a new User is created. Profile starts with empty fields
+    until the user completes their profile.
 
     Args:
         sender: The User model class
@@ -39,12 +42,10 @@ def create_user_profile(sender, instance, created, **kwargs):
         **kwargs: Additional signal arguments
     """
     if created:
-        # TODO: Implement profile creation
-        # from authentication.models import Profile
-        #
-        # Profile.objects.create(user=instance)
-        # logger.debug(f"Profile created for user: {instance.email}")
-        logger.debug(f"create_user_profile called for {instance.email} (not implemented)")
+        from authentication.models import Profile
+
+        Profile.objects.get_or_create(user=instance)
+        logger.debug(f"Profile created for user: {instance.email}")
 
 
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
@@ -62,13 +63,17 @@ def send_verification_on_registration(sender, instance, created, **kwargs):
         **kwargs: Additional signal arguments
     """
     if created and not instance.email_verified:
-        # Only send for email registrations (not OAuth)
-        if getattr(instance, "oauth_provider", "email") == "email":
+        # Check if this is an email registration (has email LinkedAccount)
+        from authentication.models import LinkedAccount
+
+        is_email_registration = LinkedAccount.objects.filter(
+            user=instance,
+            provider=LinkedAccount.Provider.EMAIL
+        ).exists()
+
+        if is_email_registration:
             # TODO: Implement verification email sending
-            # from authentication.tasks import send_verification_email
             # from authentication.services import AuthService
-            #
-            # # Create token and send email
             # AuthService.send_verification_email(instance)
             logger.debug(
                 f"Verification email would be sent to {instance.email} (not implemented)"
@@ -94,3 +99,67 @@ def log_email_verification(sender, instance, created, update_fields, **kwargs):
             # TODO: Send welcome email after verification
             # from authentication.tasks import send_welcome_email
             # send_welcome_email.delay(instance.id)
+
+
+# Connect to allauth's social_account_added signal
+try:
+    from allauth.socialaccount.signals import social_account_added
+
+    @receiver(social_account_added)
+    def populate_profile_from_social(sender, request, sociallogin, **kwargs):
+        """
+        Populate Profile with name data from social login.
+
+        This signal fires after a social account is linked to a user,
+        allowing us to extract name data from the social provider
+        and store it in the Profile.
+
+        Args:
+            sender: The signal sender
+            request: The HTTP request
+            sociallogin: The social login object containing provider data
+            **kwargs: Additional signal arguments
+        """
+        from authentication.models import Profile
+
+        user = sociallogin.user
+        extra_data = sociallogin.account.extra_data
+
+        try:
+            profile = user.profile
+        except Profile.DoesNotExist:
+            profile = Profile.objects.create(user=user)
+
+        # Extract name from extra_data (set by adapter)
+        first_name = extra_data.get("first_name", "")
+        last_name = extra_data.get("last_name", "")
+
+        # Also try provider-specific fields if not in extra_data
+        provider = sociallogin.account.provider
+        if not first_name and not last_name:
+            if provider == "google":
+                first_name = extra_data.get("given_name", "")
+                last_name = extra_data.get("family_name", "")
+
+        # Only update if we have new data and profile doesn't already have it
+        updated = False
+        if first_name and not profile.first_name:
+            profile.first_name = first_name
+            updated = True
+        if last_name and not profile.last_name:
+            profile.last_name = last_name
+            updated = True
+
+        if updated:
+            profile.save(update_fields=["first_name", "last_name", "updated_at"])
+            logger.debug(
+                f"Profile populated from {provider} for user: {user.email}",
+                extra={
+                    "first_name": profile.first_name,
+                    "last_name": profile.last_name,
+                },
+            )
+
+except ImportError:
+    # allauth not installed, skip social signals
+    logger.debug("allauth not installed, skipping social signals")

@@ -1,18 +1,25 @@
 """
 Custom validators for Django models and DRF serializers.
 
-This module provides validators for:
+This module provides domain-agnostic validators for:
 - File uploads (size, type)
-- Phone numbers
-- URLs
+- URLs (domain restrictions)
 - JSON schema validation
+- Security (XSS prevention)
+- Format validation (slugs)
+
+These validators are generic infrastructure - they have no knowledge
+of domain concepts like users, subscriptions, or business logic.
 
 Usage:
-    from utils.validators import validate_file_size, validate_phone_number
+    from core.validators import validate_file_size, validate_no_html
 
     class MyModel(models.Model):
         avatar = models.FileField(validators=[validate_file_size(max_mb=5)])
-        phone = models.CharField(validators=[validate_phone_number])
+        bio = models.TextField(validators=[validate_no_html])
+
+Note:
+    - For domain-aware validators (phone numbers), see toolkit.validators
 """
 
 from __future__ import annotations
@@ -80,33 +87,6 @@ def validate_file_extension(allowed_extensions: list[str]):
             )
 
     return validator
-
-
-def validate_phone_number(value: str):
-    """
-    Validate phone number format.
-
-    Accepts formats:
-    - +1234567890
-    - +1 234 567 890
-    - +1-234-567-890
-    - 1234567890 (10+ digits)
-
-    Args:
-        value: Phone number string to validate
-
-    Raises:
-        ValidationError: If format is invalid
-    """
-    # Remove spaces, dashes, parentheses
-    cleaned = re.sub(r"[\s\-\(\)]", "", value)
-
-    # Check for valid format
-    if not re.match(r"^\+?[1-9]\d{6,14}$", cleaned):
-        raise ValidationError(
-            "Enter a valid phone number. "
-            "Format: +1234567890 or 10-15 digits."
-        )
 
 
 def validate_url_domain(allowed_domains: list[str]):

@@ -114,7 +114,8 @@ class Conversation(BaseModel):
     class Meta:
         verbose_name = "Conversation"
         verbose_name_plural = "Conversations"
-        ordering = ["-last_message_at"]
+        # TODO: Change to ["-last_message_at"] when field is implemented
+        ordering = ["-created_at"]
         # indexes = [
         #     models.Index(fields=["is_archived", "-last_message_at"]),
         # ]

@@ -18,6 +18,4 @@ class AuthenticationConfig(AppConfig):
 
         This ensures signal handlers are connected when Django starts.
         """
-        # TODO: Import signals module when implemented
-        # from authentication import signals  # noqa: F401
-        pass
+        from authentication import signals  # noqa: F401

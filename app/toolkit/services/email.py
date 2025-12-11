@@ -18,7 +18,7 @@ Configuration:
     - DEFAULT_FROM_EMAIL
 
 Usage:
-    from utils.services.email import EmailService
+    from toolkit.services.email import EmailService
 
     # Send email with template
     EmailService.send(
@@ -252,7 +252,7 @@ class EmailService:
             Context must be JSON-serializable for Celery.
         """
         # TODO: Implement async email sending
-        # from utils.tasks import send_email_task
+        # from toolkit.tasks import send_email_task
         #
         # send_email_task.delay(
         #     to=to,

@@ -26,10 +26,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # - gcc: C compiler for packages with C extensions
 # - libpq-dev: PostgreSQL client library headers (for psycopg)
 # - python3-dev: Python headers for C extensions
+# - libjpeg-dev, zlib1g-dev: Image processing headers for Pillow
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     python3-dev \
+    libjpeg-dev \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and activate virtual environment
@@ -60,9 +63,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install only runtime dependencies (no build tools)
 # - libpq5: PostgreSQL client library (runtime only, not -dev headers)
 # - curl: For health checks
+# - libjpeg62-turbo, zlib1g: Image processing runtime libraries for Pillow
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    libjpeg62-turbo \
+    zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

@@ -1,7 +1,7 @@
 """
 Django admin configuration for authentication models.
 
-This module registers User, Profile, and EmailVerificationToken
+This module registers User, Profile, LinkedAccount, and EmailVerificationToken
 with the Django admin site for management.
 
 Related files:
@@ -11,23 +11,21 @@ Related files:
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from authentication.models import User, Profile, EmailVerificationToken
+from authentication.models import User, Profile, LinkedAccount, EmailVerificationToken
 
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     """
-    Admin configuration for User model.
+    Admin configuration for User model (slim version).
 
-    Customized for email-based authentication (no username).
+    Customized for email-based authentication. Profile data (name, etc.)
+    is managed via ProfileAdmin.
     """
 
     # List display
     list_display = (
         "email",
-        "first_name",
-        "last_name",
-        "oauth_provider",
         "email_verified",
         "is_active",
         "is_staff",
@@ -38,34 +36,21 @@ class UserAdmin(BaseUserAdmin):
         "is_staff",
         "is_superuser",
         "email_verified",
-        "oauth_provider",
         "date_joined",
     )
-    search_fields = ("email", "first_name", "last_name")
+    search_fields = ("email",)
     ordering = ("-date_joined",)
 
     # Field configuration
     fieldsets = (
         (None, {"fields": ("email", "password")}),
         (
-            "Personal info",
-            {"fields": ("first_name", "last_name")},
-        ),
-        (
-            "Authentication",
-            {"fields": ("oauth_provider", "email_verified")},
+            "Status",
+            {"fields": ("email_verified", "is_active", "is_staff", "is_superuser")},
         ),
         (
             "Permissions",
-            {
-                "fields": (
-                    "is_active",
-                    "is_staff",
-                    "is_superuser",
-                    "groups",
-                    "user_permissions",
-                ),
-            },
+            {"fields": ("groups", "user_permissions")},
         ),
         (
             "Important dates",
@@ -79,13 +64,7 @@ class UserAdmin(BaseUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": (
-                    "email",
-                    "first_name",
-                    "last_name",
-                    "password1",
-                    "password2",
-                ),
+                "fields": ("email", "password1", "password2"),
             },
         ),
     )
@@ -98,20 +77,64 @@ class UserAdmin(BaseUserAdmin):
 class ProfileAdmin(admin.ModelAdmin):
     """
     Admin configuration for Profile model.
+
+    Profile stores user identity data (name, username, avatar) and preferences.
     """
 
     list_display = (
         "user",
-        "display_name",
+        "username",
+        "first_name",
+        "last_name",
         "timezone",
         "created_at",
-        "updated_at",
     )
     list_filter = ("timezone", "created_at")
-    search_fields = ("user__email", "display_name")
+    search_fields = ("user__email", "username", "first_name", "last_name")
     ordering = ("-created_at",)
 
     # Show user info in detail view
+    raw_id_fields = ("user",)
+    readonly_fields = ("created_at", "updated_at")
+
+    fieldsets = (
+        (
+            "User",
+            {"fields": ("user",)},
+        ),
+        (
+            "Identity",
+            {"fields": ("username", "first_name", "last_name", "profile_picture")},
+        ),
+        (
+            "Preferences",
+            {"fields": ("timezone", "preferences")},
+        ),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at")},
+        ),
+    )
+
+
+@admin.register(LinkedAccount)
+class LinkedAccountAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for LinkedAccount model.
+
+    LinkedAccount tracks authentication providers linked to a user.
+    """
+
+    list_display = (
+        "user",
+        "provider",
+        "provider_user_id",
+        "created_at",
+    )
+    list_filter = ("provider", "created_at")
+    search_fields = ("user__email", "provider_user_id")
+    ordering = ("-created_at",)
+
     raw_id_fields = ("user",)
     readonly_fields = ("created_at", "updated_at")
 

@@ -2,8 +2,9 @@
 Authentication models.
 
 This module defines the core authentication models:
-- User: Custom user model with email-based authentication
+- User: Custom user model with email-based authentication (slim, auth-focused)
 - Profile: Extended user profile data (OneToOne with User)
+- LinkedAccount: Tracks authentication providers linked to a user
 - EmailVerificationToken: Tokens for email verification and password reset
 
 Related files:
@@ -17,29 +18,59 @@ Security:
     - Token expiration enforced at database level
 """
 
+import re
+
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Lower
 
 from core.models import BaseModel
 from authentication.managers import UserManager
+
+
+# Reserved usernames that cannot be used
+RESERVED_USERNAMES = frozenset([
+    "admin", "administrator", "root", "system", "api", "www",
+    "mail", "email", "support", "help", "info", "contact",
+    "about", "terms", "privacy", "security", "account", "login",
+    "logout", "register", "signup", "signin", "signout", "auth",
+    "authentication", "user", "users", "profile", "profiles",
+    "settings", "config", "configuration", "dashboard", "home",
+    "index", "null", "undefined", "anonymous", "guest", "test",
+    "demo", "example", "official", "verified", "staff", "mod",
+    "moderator", "bot", "robot", "service", "notification",
+])
+
+
+def validate_username_not_reserved(value):
+    """Validate that username is not in the reserved list."""
+    if value.lower() in RESERVED_USERNAMES:
+        raise ValidationError(
+            f"The username '{value}' is reserved and cannot be used."
+        )
+
+
+def validate_username_format(value):
+    """Validate username format: 3-30 chars, alphanumeric + _ + -."""
+    if not re.match(r"^[a-zA-Z0-9_-]{3,30}$", value):
+        raise ValidationError(
+            "Username must be 3-30 characters and contain only "
+            "letters, numbers, underscores, and hyphens."
+        )
 
 
 class User(AbstractBaseUser, PermissionsMixin):
     """
     Custom User model using email as the primary identifier.
 
-    This model provides:
-    - Email-based authentication (no username)
-    - OAuth provider tracking (google, apple, email)
-    - Email verification status
-    - Standard Django permission system via PermissionsMixin
+    This is a slim user model focused on authentication only.
+    Profile data (name, avatar, etc.) is stored in the Profile model.
+    OAuth provider tracking is handled by LinkedAccount.
 
     Fields:
         email: Primary identifier, unique, used for login
-        first_name: User's first name (optional)
-        last_name: User's last name (optional)
-        oauth_provider: How the user registered (google, apple, email)
         email_verified: Whether the user's email has been verified
         is_active: Whether the user account is active
         is_staff: Whether the user can access Django admin
@@ -60,40 +91,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         )
     """
 
-    class OAuthProvider(models.TextChoices):
-        """Choices for OAuth provider that registered the user."""
-
-        EMAIL = "email", "Email"
-        GOOGLE = "google", "Google"
-        APPLE = "apple", "Apple"
-
     # Primary identifier (replaces username)
     email = models.EmailField(
         unique=True,
         db_index=True,
         max_length=254,
         help_text="User's email address (primary identifier)",
-    )
-
-    # Profile information
-    first_name = models.CharField(
-        max_length=150,
-        blank=True,
-        help_text="User's first name",
-    )
-    last_name = models.CharField(
-        max_length=150,
-        blank=True,
-        help_text="User's last name",
-    )
-
-    # OAuth tracking
-    oauth_provider = models.CharField(
-        max_length=20,
-        choices=OAuthProvider.choices,
-        default=OAuthProvider.EMAIL,
-        db_index=True,
-        help_text="OAuth provider used for registration",
     )
 
     # Email verification status
@@ -143,42 +146,52 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def get_full_name(self):
         """
-        Return the user's full name.
+        Return the user's full name from profile.
 
         Returns:
-            str: First name and last name separated by a space, or email
-                 if no name is set.
+            str: Full name from profile, or email if no profile/name set.
         """
-        full_name = f"{self.first_name} {self.last_name}".strip()
-        return full_name if full_name else self.email
+        try:
+            return self.profile.full_name or self.email
+        except Profile.DoesNotExist:
+            return self.email
 
     def get_short_name(self):
         """
-        Return the user's short name.
+        Return the user's short name from profile.
 
         Returns:
-            str: First name if set, otherwise the local part of their email.
+            str: First name from profile, or email local part if not set.
         """
-        return self.first_name if self.first_name else self.email.split("@")[0]
+        try:
+            return self.profile.first_name or self.email.split("@")[0]
+        except Profile.DoesNotExist:
+            return self.email.split("@")[0]
 
     @property
-    def is_oauth_user(self):
-        """Check if the user registered via OAuth (not email/password)."""
-        return self.oauth_provider != self.OAuthProvider.EMAIL
+    def has_completed_profile(self):
+        """Check if user has completed profile setup (has username)."""
+        try:
+            return bool(self.profile.username)
+        except Profile.DoesNotExist:
+            return False
 
 
 class Profile(BaseModel):
     """
     Extended user profile data.
 
-    This model stores additional user information that is optional
-    and not required for authentication. It has a one-to-one
-    relationship with the User model.
+    This model stores user profile information including:
+    - Identity: username, first_name, last_name
+    - Display: profile_picture
+    - Preferences: timezone, preferences JSON
 
     Fields:
         user: OneToOne link to User (also serves as primary key)
-        avatar_url: URL to user's profile picture
-        display_name: Optional display name (different from first/last name)
+        username: Unique username (3-30 chars, alphanumeric + _ + -)
+        first_name: User's first name
+        last_name: User's last name
+        profile_picture: User's profile picture (ImageField)
         timezone: User's preferred timezone
         preferences: JSON field for flexible user preferences
 
@@ -187,7 +200,7 @@ class Profile(BaseModel):
         profile, created = Profile.objects.get_or_create(user=user)
 
         # Access profile from user
-        user.profile.display_name
+        user.profile.username
 
     Note:
         Profile is automatically created via signals when a User is created.
@@ -201,17 +214,35 @@ class Profile(BaseModel):
         help_text="User this profile belongs to",
     )
 
-    # Display settings
-    avatar_url = models.URLField(
-        max_length=500,
+    # Identity fields (moved from User)
+    first_name = models.CharField(
+        max_length=150,
         blank=True,
-        help_text="URL to user's profile picture",
+        help_text="User's first name",
     )
-    display_name = models.CharField(
-        max_length=50,
+    last_name = models.CharField(
+        max_length=150,
         blank=True,
-        help_text="Optional display name",
+        help_text="User's last name",
     )
+
+    # Username with validation
+    username = models.CharField(
+        max_length=30,
+        blank=True,
+        db_index=True,
+        validators=[validate_username_format, validate_username_not_reserved],
+        help_text="Unique username (3-30 chars, alphanumeric + _ + -)",
+    )
+
+    # Profile picture (ImageField instead of URLField)
+    profile_picture = models.ImageField(
+        upload_to="profile_pictures/",
+        blank=True,
+        null=True,
+        help_text="User's profile picture",
+    )
+
     timezone = models.CharField(
         max_length=50,
         default="UTC",
@@ -235,10 +266,112 @@ class Profile(BaseModel):
         db_table = "authentication_profile"
         verbose_name = "profile"
         verbose_name_plural = "profiles"
+        constraints = [
+            # Case-insensitive unique constraint for username
+            models.UniqueConstraint(
+                Lower("username"),
+                name="unique_username_case_insensitive",
+                condition=models.Q(username__gt=""),  # Only for non-empty usernames
+            ),
+        ]
 
     def __str__(self):
-        """Return display name or user email."""
-        return self.display_name or str(self.user)
+        """Return username or user email."""
+        return self.username or str(self.user)
+
+    @property
+    def full_name(self):
+        """Return full name or empty string."""
+        return f"{self.first_name} {self.last_name}".strip()
+
+    def clean(self):
+        """Validate and normalize username."""
+        super().clean()
+        if self.username:
+            # Normalize to lowercase for case-insensitive uniqueness
+            self.username = self.username.lower()
+
+    def save(self, *args, **kwargs):
+        """Normalize username before saving."""
+        if self.username:
+            self.username = self.username.lower()
+        super().save(*args, **kwargs)
+
+
+class LinkedAccount(BaseModel):
+    """
+    Tracks authentication providers linked to a user account.
+
+    This model allows users to link multiple authentication methods
+    (email, Google, Apple) to a single account.
+
+    Fields:
+        user: User this account belongs to
+        provider: Authentication provider (email, google, apple)
+        provider_user_id: Unique identifier from the provider
+        created_at: When this link was created (from BaseModel)
+        updated_at: When this link was last modified (from BaseModel)
+
+    Usage:
+        # Check if user has Google linked
+        user.linked_accounts.filter(provider='google').exists()
+
+        # Get all providers for a user
+        providers = user.linked_accounts.values_list('provider', flat=True)
+
+        # Link a new provider
+        LinkedAccount.objects.create(
+            user=user,
+            provider=LinkedAccount.Provider.GOOGLE,
+            provider_user_id='google123',
+        )
+    """
+
+    class Provider(models.TextChoices):
+        """Authentication provider choices."""
+
+        EMAIL = "email", "Email"
+        GOOGLE = "google", "Google"
+        APPLE = "apple", "Apple"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="linked_accounts",
+        help_text="User this linked account belongs to",
+    )
+
+    provider = models.CharField(
+        max_length=20,
+        choices=Provider.choices,
+        db_index=True,
+        help_text="Authentication provider",
+    )
+
+    provider_user_id = models.CharField(
+        max_length=255,
+        help_text="Unique identifier from the provider",
+    )
+
+    class Meta:
+        db_table = "authentication_linked_account"
+        verbose_name = "linked account"
+        verbose_name_plural = "linked accounts"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_user_id"],
+                name="unique_provider_user",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["user", "provider"],
+                name="auth_linked_user_provider_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.get_provider_display()} account for {self.user}"
 
 
 class EmailVerificationToken(BaseModel):

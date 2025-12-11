@@ -1,16 +1,16 @@
 """
-Django app configuration for utils.
+Django app configuration for toolkit.
 """
 
 from django.apps import AppConfig
 
 
-class UtilsConfig(AppConfig):
-    """Configuration for the utils application."""
+class ToolkitConfig(AppConfig):
+    """Configuration for the toolkit application."""
 
     default_auto_field = "django.db.models.BigAutoField"
-    name = "utils"
-    verbose_name = "Utilities"
+    name = "toolkit"
+    verbose_name = "Toolkit"
 
     def ready(self):
         """

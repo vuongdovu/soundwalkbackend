@@ -43,7 +43,7 @@ def send_verification_email(self, user_id: int) -> bool:
     # TODO: Implement email sending
     # from django.conf import settings
     # from authentication.models import User, EmailVerificationToken
-    # from utils.services.email import EmailService
+    # from toolkit.services.email import EmailService
     #
     # try:
     #     user = User.objects.get(id=user_id)
@@ -98,7 +98,7 @@ def send_password_reset_email(self, user_id: int) -> bool:
     # TODO: Implement password reset email
     # from django.conf import settings
     # from authentication.models import User, EmailVerificationToken
-    # from utils.services.email import EmailService
+    # from toolkit.services.email import EmailService
     #
     # try:
     #     user = User.objects.get(id=user_id)
@@ -149,7 +149,7 @@ def send_welcome_email(self, user_id: int) -> bool:
     """
     # TODO: Implement welcome email
     # from authentication.models import User
-    # from utils.services.email import EmailService
+    # from toolkit.services.email import EmailService
     #
     # try:
     #     user = User.objects.get(id=user_id)

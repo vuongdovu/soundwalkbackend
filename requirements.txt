@@ -56,6 +56,11 @@ django-cors-headers==4.6.0         # CORS handling for API
 whitenoise==6.8.2                  # Static file serving (fallback)
 
 # -----------------------------------------------------------------------------
+# Image Processing
+# -----------------------------------------------------------------------------
+Pillow==11.0.0                     # Image processing (required for ImageField)
+
+# -----------------------------------------------------------------------------
 # Payments
 # -----------------------------------------------------------------------------
 stripe==7.0.0                      # Stripe payment processing
@@ -70,13 +75,16 @@ anthropic==0.8.0                   # Anthropic API client
 # Push Notifications
 # -----------------------------------------------------------------------------
 firebase-admin==6.2.0              # Firebase Cloud Messaging (FCM)
-PyAPNs2==0.7.2                     # Apple Push Notification Service (APNs)
+# PyAPNs2==0.7.2                     # Apple Push Notification Service (APNs)
 
 # -----------------------------------------------------------------------------
-# Development & Testing (optional - uncomment as needed)
+# Development & Testing
 # -----------------------------------------------------------------------------
-# pytest==8.3.4
-# pytest-django==4.9.0
-# pytest-cov==6.0.0
-# factory-boy==3.3.1
-# ruff==0.8.4
+pytest==8.3.4                      # Testing framework
+pytest-django==4.9.0               # Django integration for pytest
+pytest-cov==6.0.0                  # Coverage reporting
+factory-boy==3.3.1                 # Test data factories
+responses==0.25.3                  # HTTP mocking for OAuth tests
+freezegun==1.4.0                   # Time manipulation for token expiry tests
+pytest-mock==3.14.0                # Enhanced mocking utilities
+# ruff==0.8.4                       # Linting (optional)
