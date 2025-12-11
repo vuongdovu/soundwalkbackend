@@ -10,7 +10,6 @@ Usage:
     Access via /admin/notifications/
 """
 
-from django.contrib import admin
 
 # TODO: Uncomment when models are implemented
 # from .models import DeviceToken, Notification, NotificationPreference

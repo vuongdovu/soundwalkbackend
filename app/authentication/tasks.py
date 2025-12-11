@@ -75,7 +75,9 @@ def send_verification_email(self, user_id: int) -> bool:
     # except EmailVerificationToken.DoesNotExist:
     #     logger.error(f"No valid verification token for user {user_id}")
     #     return False
-    logger.info(f"send_verification_email called for user_id={user_id} (not implemented)")
+    logger.info(
+        f"send_verification_email called for user_id={user_id} (not implemented)"
+    )
     return True
 
 
@@ -127,7 +129,9 @@ def send_password_reset_email(self, user_id: int) -> bool:
     # except User.DoesNotExist:
     #     logger.error(f"User {user_id} not found for password reset email")
     #     return False
-    logger.info(f"send_password_reset_email called for user_id={user_id} (not implemented)")
+    logger.info(
+        f"send_password_reset_email called for user_id={user_id} (not implemented)"
+    )
     return True
 
 
@@ -237,5 +241,7 @@ def deactivate_unverified_accounts(days: int = 30) -> int:
     #
     # logger.info(f"Deactivated {count} unverified accounts (older than {days} days)")
     # return count
-    logger.info(f"deactivate_unverified_accounts called with days={days} (not implemented)")
+    logger.info(
+        f"deactivate_unverified_accounts called with days={days} (not implemented)"
+    )
     return 0

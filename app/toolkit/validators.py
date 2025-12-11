@@ -47,6 +47,5 @@ def validate_phone_number(value: str):
     # Check for valid format
     if not re.match(r"^\+?[1-9]\d{6,14}$", cleaned):
         raise ValidationError(
-            "Enter a valid phone number. "
-            "Format: +1234567890 or 10-15 digits."
+            "Enter a valid phone number. Format: +1234567890 or 10-15 digits."
         )

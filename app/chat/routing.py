@@ -24,7 +24,6 @@ Usage in config/asgi.py:
     })
 """
 
-from django.urls import path
 
 # TODO: Uncomment when consumers are implemented
 # from . import consumers

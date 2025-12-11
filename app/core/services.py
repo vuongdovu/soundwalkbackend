@@ -177,7 +177,9 @@ class ServiceResult(Generic[T]):
         )
 
     @classmethod
-    def from_exception(cls, exc: Exception, error_code: str | None = None) -> ServiceResult[T]:
+    def from_exception(
+        cls, exc: Exception, error_code: str | None = None
+    ) -> ServiceResult[T]:
         """
         Create a failed result from an exception.
 

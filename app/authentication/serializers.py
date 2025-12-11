@@ -98,7 +98,13 @@ class ProfileSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["user_id", "user_email", "full_name", "created_at", "updated_at"]
+        read_only_fields = [
+            "user_id",
+            "user_email",
+            "full_name",
+            "created_at",
+            "updated_at",
+        ]
 
     def get_profile_picture_url(self, obj):
         """Return absolute URL for profile picture."""
@@ -273,9 +279,7 @@ class RegisterSerializer(serializers.Serializer):
     def validate(self, attrs):
         """Validate that passwords match."""
         if attrs["password1"] != attrs["password2"]:
-            raise serializers.ValidationError(
-                {"password2": "Passwords do not match."}
-            )
+            raise serializers.ValidationError({"password2": "Passwords do not match."})
         return attrs
 
     def get_cleaned_data(self):

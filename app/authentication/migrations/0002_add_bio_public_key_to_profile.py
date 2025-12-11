@@ -4,15 +4,18 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('authentication', '0001_restructure_user_profile_linkedaccount'),
+        ("authentication", "0001_restructure_user_profile_linkedaccount"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='profile',
-            name='bio_public_key',
-            field=models.TextField(blank=True, help_text='Base64-encoded EC public key (DER format) for biometric auth', null=True),
+            model_name="profile",
+            name="bio_public_key",
+            field=models.TextField(
+                blank=True,
+                help_text="Base64-encoded EC public key (DER format) for biometric auth",
+                null=True,
+            ),
         ),
     ]

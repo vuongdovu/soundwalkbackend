@@ -125,15 +125,15 @@ class TestUserManagerCreateUser:
 
         # Act: Pass first_name which should be ignored
         user = User.objects.create_user(
-            email=email,
-            password="TestPass123!",
-            first_name="IgnoredFirstName"
+            email=email, password="TestPass123!", first_name="IgnoredFirstName"
         )
 
         # Assert: User exists (no error thrown)
         assert user.pk is not None
         # Assert: first_name is not on User model
-        assert not hasattr(user, "first_name") or getattr(user, "first_name", None) is None
+        assert (
+            not hasattr(user, "first_name") or getattr(user, "first_name", None) is None
+        )
 
     def test_ignores_profile_fields_last_name(self, db):
         """
@@ -146,15 +146,15 @@ class TestUserManagerCreateUser:
 
         # Act: Pass last_name which should be ignored
         user = User.objects.create_user(
-            email=email,
-            password="TestPass123!",
-            last_name="IgnoredLastName"
+            email=email, password="TestPass123!", last_name="IgnoredLastName"
         )
 
         # Assert: User exists (no error thrown)
         assert user.pk is not None
         # Assert: last_name is not on User model
-        assert not hasattr(user, "last_name") or getattr(user, "last_name", None) is None
+        assert (
+            not hasattr(user, "last_name") or getattr(user, "last_name", None) is None
+        )
 
     def test_sets_default_flags_for_regular_user(self, db):
         """
@@ -211,9 +211,7 @@ class TestUserManagerCreateUser:
 
         # Act
         user = User.objects.create_user(
-            email=email,
-            password="TestPass123!",
-            is_active=False
+            email=email, password="TestPass123!", is_active=False
         )
 
         # Assert
@@ -232,9 +230,7 @@ class TestUserManagerCreateUser:
 
         # Act
         user = User.objects.create_user(
-            email=email,
-            password="TestPass123!",
-            email_verified=True
+            email=email, password="TestPass123!", email_verified=True
         )
 
         # Assert
@@ -298,9 +294,7 @@ class TestUserManagerCreateSuperuser:
         # Act & Assert
         with pytest.raises(ValueError) as exc_info:
             User.objects.create_superuser(
-                email=email,
-                password=password,
-                is_staff=False
+                email=email, password=password, is_staff=False
             )
 
         assert "is_staff=True" in str(exc_info.value)
@@ -320,9 +314,7 @@ class TestUserManagerCreateSuperuser:
         # Act & Assert
         with pytest.raises(ValueError) as exc_info:
             User.objects.create_superuser(
-                email=email,
-                password=password,
-                is_superuser=False
+                email=email, password=password, is_superuser=False
             )
 
         assert "is_superuser=True" in str(exc_info.value)
@@ -479,10 +471,7 @@ class TestUserManagerEdgeCases:
 
         # Act
         user = User.objects.create_user(
-            email=email,
-            password="TestPass123!",
-            email_verified=True,
-            is_active=False
+            email=email, password="TestPass123!", email_verified=True, is_active=False
         )
 
         # Assert: Extra fields are set

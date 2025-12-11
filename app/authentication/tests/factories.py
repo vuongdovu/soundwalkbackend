@@ -70,9 +70,7 @@ class UserFactory(factory.django.DjangoModelFactory):
         """Override create to use UserManager.create_user()."""
         password = kwargs.pop("password", "TestPass123!")
         return model_class.objects.create_user(
-            email=kwargs.pop("email"),
-            password=password,
-            **kwargs
+            email=kwargs.pop("email"), password=password, **kwargs
         )
 
 

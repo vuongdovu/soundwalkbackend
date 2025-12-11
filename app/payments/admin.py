@@ -10,7 +10,6 @@ Usage:
     Access via /admin/payments/
 """
 
-from django.contrib import admin
 
 # TODO: Uncomment when models are implemented
 # from .models import Subscription, Transaction, WebhookEvent

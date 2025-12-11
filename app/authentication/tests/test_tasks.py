@@ -24,7 +24,6 @@ Related files:
 from datetime import timedelta
 
 import pytest
-from celery import shared_task
 from django.utils import timezone
 from freezegun import freeze_time
 
@@ -176,7 +175,9 @@ class TestSendVerificationEmail:
         call_kwargs = mock_email.call_args[1]
         assert call_kwargs["to"] == user.email
         assert "Verify" in call_kwargs["subject"]
-        assert valid_verification_token.token in call_kwargs["context"]["verification_url"]
+        assert (
+            valid_verification_token.token in call_kwargs["context"]["verification_url"]
+        )
 
     @pytest.mark.skip(reason="Task not yet implemented - tests expected behavior")
     def test_returns_false_when_no_valid_token(self, db, user, mocker):
@@ -238,7 +239,7 @@ class TestSendVerificationEmail:
         mock_email = mocker.patch("authentication.tasks.EmailService.send")
 
         # Create older valid token
-        old_token = EmailVerificationTokenFactory(
+        EmailVerificationTokenFactory(
             user=user,
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
             expires_at=timezone.now() + timedelta(hours=24),
@@ -302,9 +303,7 @@ class TestSendPasswordResetEmail:
         # TODO: When implemented, assert result is False
 
     @pytest.mark.skip(reason="Task not yet implemented - tests expected behavior")
-    def test_sends_email_with_valid_token(
-        self, db, user, password_reset_token, mocker
-    ):
+    def test_sends_email_with_valid_token(self, db, user, password_reset_token, mocker):
         """
         When implemented: Should send email when user has valid reset token.
 
@@ -465,9 +464,7 @@ class TestCleanupExpiredTokens:
         result = cleanup_expired_tokens()
 
         assert result >= 1
-        assert not EmailVerificationToken.objects.filter(
-            id=expired_token.id
-        ).exists()
+        assert not EmailVerificationToken.objects.filter(id=expired_token.id).exists()
 
     @pytest.mark.skip(reason="Task not yet implemented - tests expected behavior")
     def test_deletes_used_tokens(self, db, user):
@@ -484,16 +481,14 @@ class TestCleanupExpiredTokens:
         result = cleanup_expired_tokens()
 
         assert result >= 1
-        assert not EmailVerificationToken.objects.filter(
-            id=used_token.id
-        ).exists()
+        assert not EmailVerificationToken.objects.filter(id=used_token.id).exists()
 
     @pytest.mark.skip(reason="Task not yet implemented - tests expected behavior")
     def test_preserves_valid_tokens(self, db, user, valid_verification_token):
         """
         When implemented: Should NOT delete valid (unused, unexpired) tokens.
         """
-        result = cleanup_expired_tokens()
+        cleanup_expired_tokens()
 
         # Valid token should still exist
         assert EmailVerificationToken.objects.filter(
@@ -558,9 +553,7 @@ class TestCleanupExpiredTokens:
         result = cleanup_expired_tokens()
 
         assert result >= 1
-        assert not EmailVerificationToken.objects.filter(
-            id=expired_token.id
-        ).exists()
+        assert not EmailVerificationToken.objects.filter(id=expired_token.id).exists()
 
 
 # =============================================================================
@@ -639,7 +632,7 @@ class TestDeactivateUnverifiedAccounts:
                 provider=LinkedAccount.Provider.EMAIL,
             )
 
-        result = deactivate_unverified_accounts(days=30)
+        deactivate_unverified_accounts(days=30)
 
         recent_unverified.refresh_from_db()
         assert recent_unverified.is_active is True
@@ -658,7 +651,7 @@ class TestDeactivateUnverifiedAccounts:
                 provider=LinkedAccount.Provider.EMAIL,
             )
 
-        result = deactivate_unverified_accounts(days=30)
+        deactivate_unverified_accounts(days=30)
 
         old_verified.refresh_from_db()
         assert old_verified.is_active is True
@@ -680,7 +673,7 @@ class TestDeactivateUnverifiedAccounts:
                 provider=LinkedAccount.Provider.GOOGLE,
             )
 
-        result = deactivate_unverified_accounts(days=30)
+        deactivate_unverified_accounts(days=30)
 
         google_user.refresh_from_db()
         assert google_user.is_active is True

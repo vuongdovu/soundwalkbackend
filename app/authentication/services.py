@@ -249,11 +249,7 @@ class AuthService:
             raise ValueError("A user with this email already exists")
 
         # Create user
-        user = User.objects.create_user(
-            email=email,
-            password=password,
-            **kwargs
-        )
+        user = User.objects.create_user(email=email, password=password, **kwargs)
 
         # Create LinkedAccount for email registration
         if password:
@@ -285,7 +281,7 @@ class AuthService:
                 token=token,
                 token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
                 used_at__isnull=True,
-                expires_at__gt=timezone.now()
+                expires_at__gt=timezone.now(),
             )
         except EmailVerificationToken.DoesNotExist:
             return False, "Invalid or expired token"
@@ -334,7 +330,8 @@ class AuthService:
             user=user,
             token=generate_token(),
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
-            expires_at=timezone.now() + timedelta(hours=AuthService.PASSWORD_RESET_EXPIRY_HOURS)
+            expires_at=timezone.now()
+            + timedelta(hours=AuthService.PASSWORD_RESET_EXPIRY_HOURS),
         )
 
         # TODO: Send email asynchronously
@@ -363,7 +360,7 @@ class AuthService:
                 token=token,
                 token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
                 used_at__isnull=True,
-                expires_at__gt=timezone.now()
+                expires_at__gt=timezone.now(),
             )
         except EmailVerificationToken.DoesNotExist:
             return False, "Invalid or expired token"
@@ -381,7 +378,7 @@ class AuthService:
         EmailVerificationToken.objects.filter(
             user=user,
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
-            used_at__isnull=True
+            used_at__isnull=True,
         ).exclude(pk=token_obj.pk).update(used_at=timezone.now())
 
         logger.info(f"Password reset for user: {user.email}")
@@ -404,7 +401,7 @@ class AuthService:
 
         logger.warning(
             f"User deactivated: {user.email}",
-            extra={"user_id": user.id, "reason": reason}
+            extra={"user_id": user.id, "reason": reason},
         )
 
     @staticmethod
@@ -427,7 +424,8 @@ class AuthService:
             user=user,
             token=generate_token(),
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
-            expires_at=timezone.now() + timedelta(hours=AuthService.EMAIL_VERIFICATION_EXPIRY_HOURS)
+            expires_at=timezone.now()
+            + timedelta(hours=AuthService.EMAIL_VERIFICATION_EXPIRY_HOURS),
         )
 
         # TODO: Queue email for sending
@@ -478,6 +476,7 @@ class BiometricService:
     def _get_cache():
         """Get Django cache backend (Redis)."""
         from django.core.cache import cache
+
         return cache
 
     @staticmethod
@@ -490,6 +489,7 @@ class BiometricService:
         """
         import secrets
         import base64
+
         return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
 
     @staticmethod
@@ -553,8 +553,7 @@ class BiometricService:
         profile.save(update_fields=["bio_public_key", "updated_at"])
 
         logger.info(
-            f"Biometric enrolled for user: {user.email}",
-            extra={"user_id": user.id}
+            f"Biometric enrolled for user: {user.email}", extra={"user_id": user.id}
         )
 
     @staticmethod
@@ -607,8 +606,7 @@ class BiometricService:
             profile.save(update_fields=["bio_public_key", "updated_at"])
 
             logger.info(
-                f"Biometric disabled for user: {user.email}",
-                extra={"user_id": user.id}
+                f"Biometric disabled for user: {user.email}", extra={"user_id": user.id}
             )
         except AttributeError:
             pass  # No profile exists
@@ -655,7 +653,7 @@ class BiometricService:
 
         logger.debug(
             f"Biometric challenge created for user: {email_normalized}",
-            extra={"user_id": user.id}
+            extra={"user_id": user.id},
         )
 
         return {
@@ -720,9 +718,7 @@ class BiometricService:
 
             # Verify signature
             public_key.verify(
-                signature_bytes,
-                challenge_bytes,
-                ec.ECDSA(hashes.SHA256())
+                signature_bytes, challenge_bytes, ec.ECDSA(hashes.SHA256())
             )
 
             # Check if user is active
@@ -731,7 +727,7 @@ class BiometricService:
 
             logger.info(
                 f"Biometric authentication successful for user: {user.email}",
-                extra={"user_id": user.id}
+                extra={"user_id": user.id},
             )
 
             return user

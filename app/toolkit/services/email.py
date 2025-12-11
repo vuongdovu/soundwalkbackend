@@ -225,7 +225,9 @@ class EmailService:
         # except Exception as e:
         #     logger.error(f"Failed to send raw email to {to}: {e}")
         #     return False
-        logger.info(f"EmailService.send_raw called for {to}: {subject} (not implemented)")
+        logger.info(
+            f"EmailService.send_raw called for {to}: {subject} (not implemented)"
+        )
         return True
 
     @staticmethod
@@ -262,7 +264,9 @@ class EmailService:
         #     **kwargs
         # )
         # logger.debug(f"Email queued for {to}: {subject}")
-        logger.info(f"EmailService.send_async called for {to}: {subject} (not implemented)")
+        logger.info(
+            f"EmailService.send_async called for {to}: {subject} (not implemented)"
+        )
 
     @staticmethod
     def send_bulk(
@@ -320,5 +324,7 @@ class EmailService:
         #
         # logger.info(f"Bulk email: sent {sent_count}/{len(messages)}")
         # return sent_count
-        logger.info(f"EmailService.send_bulk called with {len(messages)} messages (not implemented)")
+        logger.info(
+            f"EmailService.send_bulk called with {len(messages)} messages (not implemented)"
+        )
         return len(messages)

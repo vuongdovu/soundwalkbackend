@@ -19,6 +19,7 @@ def pytest_configure():
 
     # Disable throttling during tests to prevent rate limit failures
     from django.conf import settings
+
     settings.REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
     settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"] = {}
 

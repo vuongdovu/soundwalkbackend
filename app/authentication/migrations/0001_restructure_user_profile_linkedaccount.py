@@ -8,91 +8,360 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
     dependencies = [
-        ('auth', '0012_alter_user_first_name_max_length'),
+        ("auth", "0012_alter_user_first_name_max_length"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='User',
+            name="User",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('password', models.CharField(max_length=128, verbose_name='password')),
-                ('last_login', models.DateTimeField(blank=True, null=True, verbose_name='last login')),
-                ('is_superuser', models.BooleanField(default=False, help_text='Designates that this user has all permissions without explicitly assigning them.', verbose_name='superuser status')),
-                ('email', models.EmailField(db_index=True, help_text="User's email address (primary identifier)", max_length=254, unique=True)),
-                ('email_verified', models.BooleanField(default=False, help_text="Whether the user's email has been verified")),
-                ('is_active', models.BooleanField(default=True, help_text='Whether this user account is active. Deselect instead of deleting.')),
-                ('is_staff', models.BooleanField(default=False, help_text='Whether the user can access the admin site.')),
-                ('date_joined', models.DateTimeField(auto_now_add=True, help_text='When the user account was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='When the user record was last modified')),
-                ('groups', models.ManyToManyField(blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', related_name='user_set', related_query_name='user', to='auth.group', verbose_name='groups')),
-                ('user_permissions', models.ManyToManyField(blank=True, help_text='Specific permissions for this user.', related_name='user_set', related_query_name='user', to='auth.permission', verbose_name='user permissions')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("password", models.CharField(max_length=128, verbose_name="password")),
+                (
+                    "last_login",
+                    models.DateTimeField(
+                        blank=True, null=True, verbose_name="last login"
+                    ),
+                ),
+                (
+                    "is_superuser",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Designates that this user has all permissions without explicitly assigning them.",
+                        verbose_name="superuser status",
+                    ),
+                ),
+                (
+                    "email",
+                    models.EmailField(
+                        db_index=True,
+                        help_text="User's email address (primary identifier)",
+                        max_length=254,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "email_verified",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Whether the user's email has been verified",
+                    ),
+                ),
+                (
+                    "is_active",
+                    models.BooleanField(
+                        default=True,
+                        help_text="Whether this user account is active. Deselect instead of deleting.",
+                    ),
+                ),
+                (
+                    "is_staff",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Whether the user can access the admin site.",
+                    ),
+                ),
+                (
+                    "date_joined",
+                    models.DateTimeField(
+                        auto_now_add=True, help_text="When the user account was created"
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="When the user record was last modified",
+                    ),
+                ),
+                (
+                    "groups",
+                    models.ManyToManyField(
+                        blank=True,
+                        help_text="The groups this user belongs to. A user will get all permissions granted to each of their groups.",
+                        related_name="user_set",
+                        related_query_name="user",
+                        to="auth.group",
+                        verbose_name="groups",
+                    ),
+                ),
+                (
+                    "user_permissions",
+                    models.ManyToManyField(
+                        blank=True,
+                        help_text="Specific permissions for this user.",
+                        related_name="user_set",
+                        related_query_name="user",
+                        to="auth.permission",
+                        verbose_name="user permissions",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'user',
-                'verbose_name_plural': 'users',
-                'ordering': ['-date_joined'],
+                "verbose_name": "user",
+                "verbose_name_plural": "users",
+                "ordering": ["-date_joined"],
             },
         ),
         migrations.CreateModel(
-            name='Profile',
+            name="Profile",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('user', models.OneToOneField(help_text='User this profile belongs to', on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='profile', serialize=False, to=settings.AUTH_USER_MODEL)),
-                ('first_name', models.CharField(blank=True, help_text="User's first name", max_length=150)),
-                ('last_name', models.CharField(blank=True, help_text="User's last name", max_length=150)),
-                ('username', models.CharField(blank=True, db_index=True, help_text='Unique username (3-30 chars, alphanumeric + _ + -)', max_length=30, validators=[authentication.models.validate_username_format, authentication.models.validate_username_not_reserved])),
-                ('profile_picture', models.ImageField(blank=True, help_text="User's profile picture", null=True, upload_to='profile_pictures/')),
-                ('timezone', models.CharField(default='UTC', help_text="User's preferred timezone (e.g., 'America/New_York')", max_length=50)),
-                ('preferences', models.JSONField(blank=True, default=dict, help_text='User preferences as JSON (e.g., theme, language, email_frequency)')),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "user",
+                    models.OneToOneField(
+                        help_text="User this profile belongs to",
+                        on_delete=django.db.models.deletion.CASCADE,
+                        primary_key=True,
+                        related_name="profile",
+                        serialize=False,
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "first_name",
+                    models.CharField(
+                        blank=True, help_text="User's first name", max_length=150
+                    ),
+                ),
+                (
+                    "last_name",
+                    models.CharField(
+                        blank=True, help_text="User's last name", max_length=150
+                    ),
+                ),
+                (
+                    "username",
+                    models.CharField(
+                        blank=True,
+                        db_index=True,
+                        help_text="Unique username (3-30 chars, alphanumeric + _ + -)",
+                        max_length=30,
+                        validators=[
+                            authentication.models.validate_username_format,
+                            authentication.models.validate_username_not_reserved,
+                        ],
+                    ),
+                ),
+                (
+                    "profile_picture",
+                    models.ImageField(
+                        blank=True,
+                        help_text="User's profile picture",
+                        null=True,
+                        upload_to="profile_pictures/",
+                    ),
+                ),
+                (
+                    "timezone",
+                    models.CharField(
+                        default="UTC",
+                        help_text="User's preferred timezone (e.g., 'America/New_York')",
+                        max_length=50,
+                    ),
+                ),
+                (
+                    "preferences",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="User preferences as JSON (e.g., theme, language, email_frequency)",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'profile',
-                'verbose_name_plural': 'profiles',
-                'db_table': 'authentication_profile',
-                'constraints': [models.UniqueConstraint(django.db.models.functions.text.Lower('username'), condition=models.Q(('username__gt', '')), name='unique_username_case_insensitive')],
+                "verbose_name": "profile",
+                "verbose_name_plural": "profiles",
+                "db_table": "authentication_profile",
+                "constraints": [
+                    models.UniqueConstraint(
+                        django.db.models.functions.text.Lower("username"),
+                        condition=models.Q(("username__gt", "")),
+                        name="unique_username_case_insensitive",
+                    )
+                ],
             },
         ),
         migrations.CreateModel(
-            name='EmailVerificationToken',
+            name="EmailVerificationToken",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('token', models.CharField(db_index=True, help_text='Unique verification token', max_length=64, unique=True)),
-                ('token_type', models.CharField(choices=[('email_verification', 'Email Verification'), ('password_reset', 'Password Reset')], help_text='Type of verification token', max_length=20)),
-                ('expires_at', models.DateTimeField(db_index=True, help_text='When this token expires')),
-                ('used_at', models.DateTimeField(blank=True, help_text='When this token was used (null if unused)', null=True)),
-                ('user', models.ForeignKey(help_text='User this token belongs to', on_delete=django.db.models.deletion.CASCADE, related_name='verification_tokens', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "token",
+                    models.CharField(
+                        db_index=True,
+                        help_text="Unique verification token",
+                        max_length=64,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "token_type",
+                    models.CharField(
+                        choices=[
+                            ("email_verification", "Email Verification"),
+                            ("password_reset", "Password Reset"),
+                        ],
+                        help_text="Type of verification token",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "expires_at",
+                    models.DateTimeField(
+                        db_index=True, help_text="When this token expires"
+                    ),
+                ),
+                (
+                    "used_at",
+                    models.DateTimeField(
+                        blank=True,
+                        help_text="When this token was used (null if unused)",
+                        null=True,
+                    ),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        help_text="User this token belongs to",
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="verification_tokens",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'email verification token',
-                'verbose_name_plural': 'email verification tokens',
-                'db_table': 'authentication_email_verification_token',
-                'indexes': [models.Index(fields=['user', 'token_type', 'used_at'], name='auth_token_user_type_used_idx')],
+                "verbose_name": "email verification token",
+                "verbose_name_plural": "email verification tokens",
+                "db_table": "authentication_email_verification_token",
+                "indexes": [
+                    models.Index(
+                        fields=["user", "token_type", "used_at"],
+                        name="auth_token_user_type_used_idx",
+                    )
+                ],
             },
         ),
         migrations.CreateModel(
-            name='LinkedAccount',
+            name="LinkedAccount",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('provider', models.CharField(choices=[('email', 'Email'), ('google', 'Google'), ('apple', 'Apple')], db_index=True, help_text='Authentication provider', max_length=20)),
-                ('provider_user_id', models.CharField(help_text='Unique identifier from the provider', max_length=255)),
-                ('user', models.ForeignKey(help_text='User this linked account belongs to', on_delete=django.db.models.deletion.CASCADE, related_name='linked_accounts', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "provider",
+                    models.CharField(
+                        choices=[
+                            ("email", "Email"),
+                            ("google", "Google"),
+                            ("apple", "Apple"),
+                        ],
+                        db_index=True,
+                        help_text="Authentication provider",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "provider_user_id",
+                    models.CharField(
+                        help_text="Unique identifier from the provider", max_length=255
+                    ),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        help_text="User this linked account belongs to",
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="linked_accounts",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'linked account',
-                'verbose_name_plural': 'linked accounts',
-                'db_table': 'authentication_linked_account',
-                'indexes': [models.Index(fields=['user', 'provider'], name='auth_linked_user_provider_idx')],
-                'constraints': [models.UniqueConstraint(fields=('provider', 'provider_user_id'), name='unique_provider_user')],
+                "verbose_name": "linked account",
+                "verbose_name_plural": "linked accounts",
+                "db_table": "authentication_linked_account",
+                "indexes": [
+                    models.Index(
+                        fields=["user", "provider"],
+                        name="auth_linked_user_provider_idx",
+                    )
+                ],
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("provider", "provider_user_id"),
+                        name="unique_provider_user",
+                    )
+                ],
             },
         ),
     ]

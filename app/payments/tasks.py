@@ -60,7 +60,9 @@ def process_webhook_event(self, webhook_event_id: int) -> bool:
     #     event_type=webhook_event.event_type,
     #     payload=webhook_event.payload,
     # )
-    logger.info(f"process_webhook_event called for {webhook_event_id} (not implemented)")
+    logger.info(
+        f"process_webhook_event called for {webhook_event_id} (not implemented)"
+    )
     return False
 
 

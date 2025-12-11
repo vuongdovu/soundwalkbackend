@@ -31,13 +31,11 @@ import pytest
 from django.contrib.auth.hashers import check_password, is_password_usable
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
-from django.urls import reverse, NoReverseMatch
 from django.utils import timezone
 from rest_framework import status
 
 from authentication.models import (
     EmailVerificationToken,
-    Profile,
     User,
 )
 from authentication.services import AuthService
@@ -199,7 +197,7 @@ class TestSQLInjectionPrevention:
         malicious_email = "'; DROP TABLE users; --@example.com"
 
         # Create a test user to verify table still exists after query
-        test_user = UserFactory(email="safe@example.com")
+        UserFactory(email="safe@example.com")
         initial_user_count = User.objects.count()
 
         with CaptureQueriesContext(connection) as context:
@@ -276,12 +274,10 @@ class TestXSSPrevention:
         "<a href=\"javascript:alert('XSS')\">click</a>",
         "{{constructor.constructor('alert(1)')()}}",  # Angular template injection
         "${alert('XSS')}",  # Template literal injection
-        "<math><maction actiontype=\"statusline#http://google.com\">",
+        '<math><maction actiontype="statusline#http://google.com">',
     ]
 
-    def test_script_tags_in_first_name_safely_stored(
-        self, authenticated_client, user
-    ):
+    def test_script_tags_in_first_name_safely_stored(self, authenticated_client, user):
         """
         Verify script tags in first_name are stored without sanitization issues.
 
@@ -311,9 +307,7 @@ class TestXSSPrevention:
                     "XSS payload was corrupted during storage"
                 )
 
-    def test_script_tags_in_last_name_safely_stored(
-        self, authenticated_client, user
-    ):
+    def test_script_tags_in_last_name_safely_stored(self, authenticated_client, user):
         """
         Verify script tags in last_name field are safely handled.
         """
@@ -422,7 +416,9 @@ class TestTokenSecurity:
         tokens = []
         for _ in range(10):
             AuthService.send_verification_email(user)
-            token = EmailVerificationToken.objects.filter(user=user).latest("created_at")
+            token = EmailVerificationToken.objects.filter(user=user).latest(
+                "created_at"
+            )
             tokens.append(token.token)
 
         # All tokens should be unique
@@ -450,11 +446,32 @@ class TestTokenSecurity:
 
         # Check for sequential hex digits (0123, abcd, etc.)
         sequential_patterns = [
-            "0123", "1234", "2345", "3456", "4567", "5678", "6789",
-            "abcd", "bcde", "cdef",
-            "0000", "1111", "2222", "3333", "4444", "5555", "6666",
-            "7777", "8888", "9999", "aaaa", "bbbb", "cccc", "dddd",
-            "eeee", "ffff",
+            "0123",
+            "1234",
+            "2345",
+            "3456",
+            "4567",
+            "5678",
+            "6789",
+            "abcd",
+            "bcde",
+            "cdef",
+            "0000",
+            "1111",
+            "2222",
+            "3333",
+            "4444",
+            "5555",
+            "6666",
+            "7777",
+            "8888",
+            "9999",
+            "aaaa",
+            "bbbb",
+            "cccc",
+            "dddd",
+            "eeee",
+            "ffff",
         ]
 
         for pattern in sequential_patterns:
@@ -475,7 +492,10 @@ class TestTokenSecurity:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "invalid" in response.data["detail"].lower() or "expired" in response.data["detail"].lower()
+        assert (
+            "invalid" in response.data["detail"].lower()
+            or "expired" in response.data["detail"].lower()
+        )
 
     def test_used_tokens_cannot_be_reused(
         self, api_client, used_verification_token, user
@@ -492,7 +512,10 @@ class TestTokenSecurity:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "invalid" in response.data["detail"].lower() or "expired" in response.data["detail"].lower()
+        assert (
+            "invalid" in response.data["detail"].lower()
+            or "expired" in response.data["detail"].lower()
+        )
 
     def test_tokens_are_marked_used_after_verification(
         self, api_client, valid_verification_token, user
@@ -632,15 +655,11 @@ class TestPasswordSecurity:
         )
 
         # Password should be a valid hash format
-        assert is_password_usable(user.password), (
-            "Password should be a usable hash"
-        )
+        assert is_password_usable(user.password), "Password should be a usable hash"
 
         # Hash should start with algorithm identifier (Django format)
         # e.g., pbkdf2_sha256$, argon2$, bcrypt$
-        assert "$" in user.password, (
-            "Password hash should contain algorithm separator"
-        )
+        assert "$" in user.password, "Password hash should contain algorithm separator"
 
     def test_password_hash_is_not_reversible(self, db):
         """
@@ -653,7 +672,10 @@ class TestPasswordSecurity:
         user = UserFactory()
 
         # Verify correct password works
-        assert check_password(password, user.password) is False or user.password != password
+        assert (
+            check_password(password, user.password) is False
+            or user.password != password
+        )
 
         # Set known password
         user.set_password(password)
@@ -709,7 +731,9 @@ class TestPasswordSecurity:
             "Password value should never appear in response"
         )
 
-    def test_password_change_invalidates_old_tokens(self, db, user, password_reset_token):
+    def test_password_change_invalidates_old_tokens(
+        self, db, user, password_reset_token
+    ):
         """
         Verify password change invalidates other reset tokens.
 
@@ -779,9 +803,7 @@ class TestAuthorizationBypass:
         response = client1.get("/api/v1/auth/profile/")
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.data["username"] == "alice_profile", (
-            "Should return own profile"
-        )
+        assert response.data["username"] == "alice_profile", "Should return own profile"
         assert response.data["user_email"] == user1.email
 
         # User2's specific data should not be accessible by User1
@@ -922,9 +944,7 @@ class TestAuthorizationBypass:
         user2.refresh_from_db()
 
         assert user1.email_verified is True
-        assert user2.email_verified is False, (
-            "Token should only verify its owner"
-        )
+        assert user2.email_verified is False, "Token should only verify its owner"
 
 
 # =============================================================================
@@ -1269,7 +1289,7 @@ class TestAdditionalSecurityMeasures:
         user.profile.save()
 
         # Attempt to set sensitive fields
-        response = authenticated_client.patch(
+        authenticated_client.patch(
             "/api/v1/auth/profile/",
             data={
                 "user_id": 9999,
@@ -1305,7 +1325,16 @@ class TestAdditionalSecurityMeasures:
 
         # Check response doesn't contain SQL keywords
         response_text = json.dumps(response.data).lower()
-        sql_keywords = ["select", "insert", "table", "column", "constraint", "postgresql", "mysql", "sqlite"]
+        sql_keywords = [
+            "select",
+            "insert",
+            "table",
+            "column",
+            "constraint",
+            "postgresql",
+            "mysql",
+            "sqlite",
+        ]
 
         for keyword in sql_keywords:
             # Allow "table" only if it's part of a normal word
@@ -1315,7 +1344,9 @@ class TestAdditionalSecurityMeasures:
                 f"Response may expose database schema: contains '{keyword}'"
             )
 
-    def test_http_methods_restricted_appropriately(self, api_client, authenticated_client):
+    def test_http_methods_restricted_appropriately(
+        self, api_client, authenticated_client
+    ):
         """
         Verify endpoints only accept appropriate HTTP methods.
         """

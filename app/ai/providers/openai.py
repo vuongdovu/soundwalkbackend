@@ -139,7 +139,7 @@ class OpenAIProvider(BaseProviderImpl):
         #     },
         #     "finish_reason": choice.finish_reason,
         # }
-        logger.info(f"OpenAI complete called (not implemented)")
+        logger.info("OpenAI complete called (not implemented)")
         return {
             "content": "OpenAI completion not implemented",
             "model": model or self.default_model,
@@ -188,7 +188,7 @@ class OpenAIProvider(BaseProviderImpl):
         # async for chunk in stream:
         #     if chunk.choices[0].delta.content:
         #         yield chunk.choices[0].delta.content
-        logger.info(f"OpenAI stream_complete called (not implemented)")
+        logger.info("OpenAI stream_complete called (not implemented)")
         yield "OpenAI streaming not implemented"
 
     def count_tokens(self, text: str, model: str | None = None) -> int:
@@ -214,5 +214,5 @@ class OpenAIProvider(BaseProviderImpl):
         #     encoding = tiktoken.get_encoding("cl100k_base")
         #
         # return len(encoding.encode(text))
-        logger.info(f"count_tokens called (not implemented)")
+        logger.info("count_tokens called (not implemented)")
         return len(text) // 4  # Rough estimate

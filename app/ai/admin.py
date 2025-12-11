@@ -11,7 +11,6 @@ Usage:
     Access via /admin/ai/
 """
 
-from django.contrib import admin
 
 # TODO: Uncomment when models are implemented
 # from .models import AIProvider, AIRequest, AIUsageQuota, PromptTemplate

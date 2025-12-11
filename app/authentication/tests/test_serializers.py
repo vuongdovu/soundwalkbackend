@@ -28,17 +28,14 @@ Dependencies:
 """
 
 import io
-from datetime import timedelta
-from unittest.mock import MagicMock
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.utils import timezone
 from PIL import Image
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
-from authentication.models import User, Profile, LinkedAccount
+from authentication.models import User, LinkedAccount
 from authentication.serializers import (
     UserSerializer,
     ProfileSerializer,
@@ -48,8 +45,6 @@ from authentication.serializers import (
 )
 from authentication.tests.factories import (
     UserFactory,
-    ProfileFactory,
-    LinkedAccountFactory,
 )
 
 
@@ -66,11 +61,9 @@ def create_test_image():
     Returns a function that generates in-memory image files with configurable
     dimensions, format, and size.
     """
+
     def _create_image(
-        name="test.jpg",
-        format="JPEG",
-        size=(100, 100),
-        file_size_kb=None
+        name="test.jpg", format="JPEG", size=(100, 100), file_size_kb=None
     ):
         """
         Create an in-memory image file for testing uploads.
@@ -115,7 +108,7 @@ def oversized_image(create_test_image):
         name="large.jpg",
         format="JPEG",
         size=(100, 100),
-        file_size_kb=6000  # 6MB, exceeds 5MB limit
+        file_size_kb=6000,  # 6MB, exceeds 5MB limit
     )
 
 
@@ -231,7 +224,9 @@ class TestUserSerializer:
         API call to fetch profile information.
         """
         serializer = UserSerializer(user_with_complete_profile)
-        assert serializer.data["username"] == user_with_complete_profile.profile.username
+        assert (
+            serializer.data["username"] == user_with_complete_profile.profile.username
+        )
 
     def test_username_empty_for_incomplete_profile(self, user_with_incomplete_profile):
         """
@@ -254,7 +249,9 @@ class TestUserSerializer:
         serializer = UserSerializer(user_with_complete_profile)
         assert serializer.data["profile_completed"] is True
 
-    def test_profile_completed_false_when_no_username(self, user_with_incomplete_profile):
+    def test_profile_completed_false_when_no_username(
+        self, user_with_incomplete_profile
+    ):
         """
         profile_completed is False when user has no username.
 
@@ -357,7 +354,9 @@ class TestProfileSerializer:
         display and @mentions.
         """
         serializer = ProfileSerializer(user_with_complete_profile.profile)
-        assert serializer.data["username"] == user_with_complete_profile.profile.username
+        assert (
+            serializer.data["username"] == user_with_complete_profile.profile.username
+        )
 
     def test_serializes_name_fields(self, user_with_complete_profile):
         """
@@ -538,9 +537,7 @@ class TestProfileUpdateSerializer:
         data = {"first_name": "John"}  # Missing username
 
         serializer = ProfileUpdateSerializer(
-            instance=profile,
-            data=data,
-            context={"user": user_with_incomplete_profile}
+            instance=profile, data=data, context={"user": user_with_incomplete_profile}
         )
         assert not serializer.is_valid()
         assert "username" in serializer.errors
@@ -559,7 +556,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data=data,
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
 
@@ -576,7 +573,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"first_name": "Test"},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         serializer.is_valid()
         # DRF default required message when required=True is set
@@ -597,16 +594,20 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"first_name": "Test"},
             partial=True,  # PATCH-style partial update
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         serializer.is_valid()
-        assert "required to complete your profile" in str(serializer.errors.get("username", ""))
+        assert "required to complete your profile" in str(
+            serializer.errors.get("username", "")
+        )
 
     # -------------------------------------------------------------------------
     # Username Format Validation Tests
     # -------------------------------------------------------------------------
 
-    def test_valid_username_formats(self, user_with_incomplete_profile, valid_usernames):
+    def test_valid_username_formats(
+        self, user_with_incomplete_profile, valid_usernames
+    ):
         """
         Valid username formats pass validation.
 
@@ -619,7 +620,7 @@ class TestProfileUpdateSerializer:
             serializer = ProfileUpdateSerializer(
                 instance=profile,
                 data={"username": username},
-                context={"user": user_with_incomplete_profile}
+                context={"user": user_with_incomplete_profile},
             )
             # Valid format should pass format validation
             # (may fail uniqueness if run multiple times)
@@ -642,7 +643,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": "ab"},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         assert not serializer.is_valid()
         assert "username" in serializer.errors
@@ -658,7 +659,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": "a" * 31},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         assert not serializer.is_valid()
         assert "username" in serializer.errors
@@ -673,12 +674,14 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": "user name"},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         assert not serializer.is_valid()
         assert "username" in serializer.errors
 
-    def test_invalid_username_with_special_characters(self, user_with_incomplete_profile):
+    def test_invalid_username_with_special_characters(
+        self, user_with_incomplete_profile
+    ):
         """
         Username cannot contain special characters (except _ and -).
 
@@ -692,7 +695,7 @@ class TestProfileUpdateSerializer:
             serializer = ProfileUpdateSerializer(
                 instance=profile,
                 data={"username": f"user{char}name"},
-                context={"user": user_with_incomplete_profile}
+                context={"user": user_with_incomplete_profile},
             )
             assert not serializer.is_valid(), f"Character '{char}' should be invalid"
             assert "username" in serializer.errors
@@ -709,7 +712,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": "invalid@user"},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         serializer.is_valid()
         error_msg = str(serializer.errors.get("username", ""))
@@ -735,7 +738,7 @@ class TestProfileUpdateSerializer:
             serializer = ProfileUpdateSerializer(
                 instance=profile,
                 data={"username": reserved},
-                context={"user": user_with_incomplete_profile}
+                context={"user": user_with_incomplete_profile},
             )
             assert not serializer.is_valid(), f"'{reserved}' should be rejected"
             assert "username" in serializer.errors
@@ -753,7 +756,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": "admin"},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         serializer.is_valid()
         error_msg = str(serializer.errors.get("username", ""))
@@ -783,7 +786,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=user2.profile,
             data={"username": "takenname"},
-            context={"user": user2}
+            context={"user": user2},
         )
         assert not serializer.is_valid()
         assert "username" in serializer.errors
@@ -807,7 +810,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=user2.profile,
             data={"username": "testuser"},  # Different case
-            context={"user": user2}
+            context={"user": user2},
         )
         assert not serializer.is_valid()
         assert "already taken" in str(serializer.errors.get("username", ""))
@@ -825,7 +828,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": current_username, "first_name": "Updated"},
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
 
@@ -840,7 +843,7 @@ class TestProfileUpdateSerializer:
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"username": "MyUserName"},
-            context={"user": user_with_incomplete_profile}
+            context={"user": user_with_incomplete_profile},
         )
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["username"] == "myusername"
@@ -849,9 +852,7 @@ class TestProfileUpdateSerializer:
     # Profile Picture Validation Tests
     # -------------------------------------------------------------------------
 
-    def test_valid_image_accepted(
-        self, user_with_complete_profile, valid_image
-    ):
+    def test_valid_image_accepted(self, user_with_complete_profile, valid_image):
         """
         Valid image files are accepted for profile picture.
 
@@ -863,7 +864,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"profile_picture": valid_image},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
 
@@ -881,7 +882,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"profile_picture": oversized_image},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert not serializer.is_valid()
         assert "profile_picture" in serializer.errors
@@ -899,7 +900,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"profile_picture": None},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
 
@@ -912,25 +913,26 @@ class TestProfileUpdateSerializer:
         """
         # Create a fake "PDF" file
         invalid_file = SimpleUploadedFile(
-            "document.pdf",
-            b"fake pdf content",
-            content_type="application/pdf"
+            "document.pdf", b"fake pdf content", content_type="application/pdf"
         )
         profile = user_with_complete_profile.profile
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"profile_picture": invalid_file},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert not serializer.is_valid()
         assert "profile_picture" in serializer.errors
 
-    @pytest.mark.parametrize("filename,fmt", [
-        ("test.jpg", "JPEG"),
-        ("test.png", "PNG"),
-        ("test.gif", "GIF"),
-    ])
+    @pytest.mark.parametrize(
+        "filename,fmt",
+        [
+            ("test.jpg", "JPEG"),
+            ("test.png", "PNG"),
+            ("test.gif", "GIF"),
+        ],
+    )
     def test_accepted_image_formats(
         self, user_with_complete_profile, create_test_image, filename, fmt
     ):
@@ -946,7 +948,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"profile_picture": image},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), f"{fmt} should be accepted: {serializer.errors}"
 
@@ -962,6 +964,7 @@ class TestProfileUpdateSerializer:
         # Skip if Pillow doesn't have WEBP support (depends on libwebp)
         try:
             from PIL import features
+
             if not features.check("webp"):
                 pytest.skip("Pillow WEBP support not available")
         except ImportError:
@@ -973,7 +976,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"profile_picture": image},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), f"WEBP should be accepted: {serializer.errors}"
 
@@ -992,13 +995,13 @@ class TestProfileUpdateSerializer:
         preferences = {
             "theme": "dark",
             "language": "en",
-            "notifications": {"email": True, "push": False}
+            "notifications": {"email": True, "push": False},
         }
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"preferences": preferences},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
         assert serializer.validated_data["preferences"] == preferences
@@ -1024,7 +1027,7 @@ class TestProfileUpdateSerializer:
                 instance=profile,
                 data={"preferences": invalid},
                 partial=True,
-                context={"user": user_with_complete_profile}
+                context={"user": user_with_complete_profile},
             )
             # None is allowed by the field but should pass validation
             if invalid is None:
@@ -1045,7 +1048,7 @@ class TestProfileUpdateSerializer:
             instance=profile,
             data={"preferences": {}},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
 
@@ -1061,14 +1064,12 @@ class TestProfileUpdateSerializer:
         included in the request, leaving others unchanged.
         """
         profile = user_with_complete_profile.profile
-        original_username = profile.username
-        original_last_name = profile.last_name
 
         serializer = ProfileUpdateSerializer(
             instance=profile,
             data={"first_name": "NewFirst"},
             partial=True,
-            context={"user": user_with_complete_profile}
+            context={"user": user_with_complete_profile},
         )
         assert serializer.is_valid(), serializer.errors
 
@@ -1245,10 +1246,7 @@ class TestRegisterSerializer:
         Why it matters: Email is the primary identifier and is
         required for account recovery and communication.
         """
-        data = {
-            "password1": "SecurePass123!",
-            "password2": "SecurePass123!"
-        }
+        data = {"password1": "SecurePass123!", "password2": "SecurePass123!"}
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
         assert "email" in serializer.errors
@@ -1263,7 +1261,7 @@ class TestRegisterSerializer:
         data = {
             "email": "not-an-email",
             "password1": "SecurePass123!",
-            "password2": "SecurePass123!"
+            "password2": "SecurePass123!",
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1279,7 +1277,7 @@ class TestRegisterSerializer:
         data = {
             "email": user.email,
             "password1": "SecurePass123!",
-            "password2": "SecurePass123!"
+            "password2": "SecurePass123!",
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1296,7 +1294,7 @@ class TestRegisterSerializer:
         data = {
             "email": user.email.upper(),
             "password1": "SecurePass123!",
-            "password2": "SecurePass123!"
+            "password2": "SecurePass123!",
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1312,7 +1310,7 @@ class TestRegisterSerializer:
         data = {
             "email": "USER@EXAMPLE.COM",
             "password1": "SecurePass123!",
-            "password2": "SecurePass123!"
+            "password2": "SecurePass123!",
         }
         serializer = RegisterSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
@@ -1329,10 +1327,7 @@ class TestRegisterSerializer:
         Why it matters: Users must set a password for email-based
         authentication.
         """
-        data = {
-            "email": "test_pwd_required@example.com",
-            "password2": "SecurePass123!"
-        }
+        data = {"email": "test_pwd_required@example.com", "password2": "SecurePass123!"}
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
         assert "password1" in serializer.errors
@@ -1347,7 +1342,7 @@ class TestRegisterSerializer:
         data = {
             "email": "test_pwd_minlen@example.com",
             "password1": "short",
-            "password2": "short"
+            "password2": "short",
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1363,7 +1358,7 @@ class TestRegisterSerializer:
         data = {
             "email": "test_pwd_8chars@example.com",
             "password1": "12345678",
-            "password2": "12345678"
+            "password2": "12345678",
         }
         serializer = RegisterSerializer(data=data)
         assert serializer.is_valid(), serializer.errors
@@ -1393,7 +1388,7 @@ class TestRegisterSerializer:
         """
         data = {
             "email": "test_pwd2_required@example.com",
-            "password1": "SecurePass123!"
+            "password1": "SecurePass123!",
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()
@@ -1409,7 +1404,7 @@ class TestRegisterSerializer:
         data = {
             "email": "test_pwd2_mismatch@example.com",
             "password1": "SecurePass123!",
-            "password2": "DifferentPass456!"
+            "password2": "DifferentPass456!",
         }
         serializer = RegisterSerializer(data=data)
         assert not serializer.is_valid()

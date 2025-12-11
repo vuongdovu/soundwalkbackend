@@ -29,10 +29,9 @@ Dependencies:
 """
 
 import pytest
-from django.urls import reverse
 from rest_framework import status
 
-from authentication.models import User, Profile, EmailVerificationToken
+from authentication.models import Profile, EmailVerificationToken
 
 
 # =============================================================================
@@ -167,7 +166,10 @@ class TestProfileViewPut:
     """
 
     def test_put_completes_profile_with_valid_data(
-        self, authenticated_client_factory, user_with_incomplete_profile, valid_profile_data
+        self,
+        authenticated_client_factory,
+        user_with_incomplete_profile,
+        valid_profile_data,
     ):
         """
         Successfully completes profile when username is provided.
@@ -252,7 +254,10 @@ class TestProfileViewPut:
         assert response.data["preferences"] == {"theme": "light", "language": "fr"}
 
     def test_put_rejects_reserved_username(
-        self, authenticated_client_factory, user_with_incomplete_profile, reserved_usernames
+        self,
+        authenticated_client_factory,
+        user_with_incomplete_profile,
+        reserved_usernames,
     ):
         """
         PUT with reserved username returns 400 error.
@@ -269,7 +274,10 @@ class TestProfileViewPut:
         assert "username" in response.data
 
     def test_put_rejects_duplicate_username(
-        self, authenticated_client_factory, user_with_incomplete_profile, user_with_complete_profile
+        self,
+        authenticated_client_factory,
+        user_with_incomplete_profile,
+        user_with_complete_profile,
     ):
         """
         PUT with already-taken username returns 400 error.
@@ -286,7 +294,10 @@ class TestProfileViewPut:
         assert "username" in response.data
 
     def test_put_rejects_invalid_username_format(
-        self, authenticated_client_factory, user_with_incomplete_profile, invalid_usernames
+        self,
+        authenticated_client_factory,
+        user_with_incomplete_profile,
+        invalid_usernames,
     ):
         """
         PUT with invalid username format returns 400 error.
@@ -320,7 +331,9 @@ class TestProfileViewPut:
         assert response.status_code == status.HTTP_200_OK
         assert response.data["username"] == "mixedcaseuser"
 
-    def test_put_returns_401_for_unauthenticated_request(self, api_client, valid_profile_data):
+    def test_put_returns_401_for_unauthenticated_request(
+        self, api_client, valid_profile_data
+    ):
         """
         Unauthenticated PUT requests receive 401 Unauthorized.
 
@@ -417,7 +430,10 @@ class TestProfileViewPatch:
         assert response.data["username"] == "newname"
 
     def test_patch_rejects_reserved_username(
-        self, authenticated_client_factory, user_with_complete_profile, reserved_usernames
+        self,
+        authenticated_client_factory,
+        user_with_complete_profile,
+        reserved_usernames,
     ):
         """
         PATCH with reserved username returns 400 error.
@@ -556,7 +572,9 @@ class TestEmailVerificationView:
         valid_verification_token.refresh_from_db()
         assert valid_verification_token.used_at is not None
 
-    def test_post_fails_with_expired_token(self, api_client, expired_verification_token):
+    def test_post_fails_with_expired_token(
+        self, api_client, expired_verification_token
+    ):
         """
         Expired token returns 400 error.
 
@@ -568,7 +586,10 @@ class TestEmailVerificationView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "invalid" in response.data["detail"].lower() or "expired" in response.data["detail"].lower()
+        assert (
+            "invalid" in response.data["detail"].lower()
+            or "expired" in response.data["detail"].lower()
+        )
 
     def test_post_fails_with_used_token(self, api_client, used_verification_token):
         """
@@ -606,7 +627,9 @@ class TestEmailVerificationView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_post_fails_with_password_reset_token(self, api_client, password_reset_token):
+    def test_post_fails_with_password_reset_token(
+        self, api_client, password_reset_token
+    ):
         """
         Password reset token cannot be used for email verification.
 
@@ -619,7 +642,9 @@ class TestEmailVerificationView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_post_does_not_require_authentication(self, api_client, valid_verification_token):
+    def test_post_does_not_require_authentication(
+        self, api_client, valid_verification_token
+    ):
         """
         Email verification endpoint is publicly accessible.
 
@@ -670,7 +695,7 @@ class TestResendEmailView:
 
         monkeypatch.setattr(
             "authentication.services.AuthService.send_verification_email",
-            staticmethod(mock_send)
+            staticmethod(mock_send),
         )
 
         client = authenticated_client_factory(unverified_user)
@@ -720,10 +745,10 @@ class TestResendEmailView:
         # Mock to prevent side effects while letting the view work
         monkeypatch.setattr(
             "authentication.services.AuthService.send_verification_email",
-            staticmethod(lambda user: None)
+            staticmethod(lambda user: None),
         )
 
-        initial_token_count = EmailVerificationToken.objects.filter(
+        EmailVerificationToken.objects.filter(
             user=unverified_user,
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         ).count()
@@ -815,7 +840,9 @@ class TestDeactivateAccountView:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_post_preserves_user_data_after_deactivation(self, authenticated_client, user):
+    def test_post_preserves_user_data_after_deactivation(
+        self, authenticated_client, user
+    ):
         """
         Deactivation preserves user data (soft delete, not hard delete).
 

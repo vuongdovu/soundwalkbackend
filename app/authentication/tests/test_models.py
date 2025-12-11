@@ -96,8 +96,7 @@ class TestUserModel:
         with different casing (e.g., user@EXAMPLE.com vs user@example.com).
         """
         user = User.objects.create_user(
-            email="Test@EXAMPLE.COM",
-            password="TestPass123!"
+            email="Test@EXAMPLE.COM", password="TestPass123!"
         )
         # Django's normalize_email lowercases the domain, not the local part
         assert user.email == "Test@example.com"
@@ -110,8 +109,7 @@ class TestUserModel:
         must prove they own the email before accessing protected features.
         """
         user = User.objects.create_user(
-            email="new@example.com",
-            password="TestPass123!"
+            email="new@example.com", password="TestPass123!"
         )
         assert user.email_verified is False
 
@@ -123,8 +121,7 @@ class TestUserModel:
         registration. Deactivation is an administrative action.
         """
         user = User.objects.create_user(
-            email="new@example.com",
-            password="TestPass123!"
+            email="new@example.com", password="TestPass123!"
         )
         assert user.is_active is True
 
@@ -136,8 +133,7 @@ class TestUserModel:
         be explicitly granted. Default-deny is a security best practice.
         """
         user = User.objects.create_user(
-            email="new@example.com",
-            password="TestPass123!"
+            email="new@example.com", password="TestPass123!"
         )
         assert user.is_staff is False
 
@@ -150,8 +146,7 @@ class TestUserModel:
         """
         before_creation = timezone.now()
         user = User.objects.create_user(
-            email="new@example.com",
-            password="TestPass123!"
+            email="new@example.com", password="TestPass123!"
         )
         after_creation = timezone.now()
 
@@ -181,8 +176,7 @@ class TestUserModel:
         """
         plain_password = "TestPass123!"
         user = User.objects.create_user(
-            email="new@example.com",
-            password=plain_password
+            email="new@example.com", password=plain_password
         )
 
         assert user.password != plain_password
@@ -336,8 +330,7 @@ class TestUserModel:
         Why it matters: Default user creation should have minimal privileges.
         """
         user = User.objects.create_user(
-            email="regular@example.com",
-            password="TestPass123!"
+            email="regular@example.com", password="TestPass123!"
         )
         assert user.is_staff is False
         assert user.is_superuser is False
@@ -360,9 +353,7 @@ class TestUserModel:
         """
         with pytest.raises(ValueError, match="is_staff"):
             User.objects.create_superuser(
-                email="admin@example.com",
-                password="AdminPass123!",
-                is_staff=False
+                email="admin@example.com", password="AdminPass123!", is_staff=False
             )
 
     def test_create_superuser_raises_error_if_is_superuser_false(self, db):
@@ -373,9 +364,7 @@ class TestUserModel:
         """
         with pytest.raises(ValueError, match="is_superuser"):
             User.objects.create_superuser(
-                email="admin@example.com",
-                password="AdminPass123!",
-                is_superuser=False
+                email="admin@example.com", password="AdminPass123!", is_superuser=False
             )
 
     # -------------------------------------------------------------------------
@@ -526,7 +515,7 @@ class TestProfileModel:
             "theme": "dark",
             "language": "en",
             "email_frequency": "weekly",
-            "nested": {"key": "value"}
+            "nested": {"key": "value"},
         }
         user.profile.preferences = preferences
         user.profile.save()
@@ -851,8 +840,19 @@ class TestUsernameValidation:
         Why it matters: Documents and verifies critical reserved names.
         """
         critical_names = [
-            "admin", "administrator", "root", "system", "api", "support",
-            "login", "logout", "signup", "signin", "auth", "null", "undefined"
+            "admin",
+            "administrator",
+            "root",
+            "system",
+            "api",
+            "support",
+            "login",
+            "logout",
+            "signup",
+            "signin",
+            "auth",
+            "null",
+            "undefined",
         ]
         for name in critical_names:
             assert name in RESERVED_USERNAMES, f"{name} should be reserved"
@@ -907,7 +907,7 @@ class TestLinkedAccountModel:
             LinkedAccount.objects.create(
                 user=None,
                 provider=LinkedAccount.Provider.EMAIL,
-                provider_user_id="test@example.com"
+                provider_user_id="test@example.com",
             )
 
     def test_linked_account_deletes_when_user_deleted(self, linked_account_email):
@@ -939,7 +939,7 @@ class TestLinkedAccountModel:
             LinkedAccountFactory(
                 user=another_user,
                 provider=LinkedAccount.Provider.GOOGLE,
-                provider_user_id=linked_account_google.provider_user_id
+                provider_user_id=linked_account_google.provider_user_id,
             )
 
     def test_linked_account_same_provider_id_different_providers_allowed(
@@ -954,12 +954,12 @@ class TestLinkedAccountModel:
         LinkedAccountFactory(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="same-id-123"
+            provider_user_id="same-id-123",
         )
         LinkedAccountFactory(
             user=user,
             provider=LinkedAccount.Provider.APPLE,
-            provider_user_id="same-id-123"
+            provider_user_id="same-id-123",
         )
 
         assert user.linked_accounts.count() == 2
@@ -985,22 +985,23 @@ class TestLinkedAccountModel:
         LinkedAccountFactory(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-id-1"
+            provider_user_id="google-id-1",
         )
 
         # Same user, same provider, different ID - should this be allowed?
         # Based on the constraint, only provider+provider_user_id is unique
         # So technically this creates a second record
-        second = LinkedAccountFactory(
+        LinkedAccountFactory(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-id-2"
+            provider_user_id="google-id-2",
         )
 
         # This is actually allowed by current schema - may want to review
-        assert user.linked_accounts.filter(
-            provider=LinkedAccount.Provider.GOOGLE
-        ).count() == 2
+        assert (
+            user.linked_accounts.filter(provider=LinkedAccount.Provider.GOOGLE).count()
+            == 2
+        )
 
     # -------------------------------------------------------------------------
     # Method Tests
@@ -1065,7 +1066,7 @@ class TestEmailVerificationToken:
                 user=user,
                 token=None,
                 token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
-                expires_at=timezone.now() + timedelta(hours=24)
+                expires_at=timezone.now() + timedelta(hours=24),
             )
 
     def test_token_must_be_unique(self, db, user):
@@ -1109,7 +1110,7 @@ class TestEmailVerificationToken:
                 user=user,
                 token="a" * 64,
                 token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
-                expires_at=None
+                expires_at=None,
             )
 
     def test_used_at_defaults_to_none(self, valid_verification_token):
@@ -1144,16 +1145,13 @@ class TestEmailVerificationToken:
         or have both email verification and password reset tokens.
         """
         EmailVerificationTokenFactory(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            user=user, token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
         )
         EmailVerificationTokenFactory(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
+            user=user, token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
         )
         EmailVerificationTokenFactory(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            user=user, token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
         )
 
         assert user.verification_tokens.count() == 3
@@ -1195,7 +1193,7 @@ class TestEmailVerificationToken:
         """
         token = EmailVerificationTokenFactory(
             user=user,
-            expires_at=timezone.now()  # Expires exactly now
+            expires_at=timezone.now(),  # Expires exactly now
         )
 
         assert token.is_valid is False
@@ -1208,8 +1206,7 @@ class TestEmailVerificationToken:
         Why it matters: Boundary test for expiration check.
         """
         token = EmailVerificationTokenFactory(
-            user=user,
-            expires_at=timezone.now() + timedelta(seconds=1)
+            user=user, expires_at=timezone.now() + timedelta(seconds=1)
         )
 
         assert token.is_valid is True
@@ -1223,7 +1220,7 @@ class TestEmailVerificationToken:
         token = EmailVerificationTokenFactory(
             user=user,
             used_at=timezone.now() - timedelta(hours=2),
-            expires_at=timezone.now() - timedelta(hours=1)
+            expires_at=timezone.now() - timedelta(hours=1),
         )
 
         assert token.is_valid is False
@@ -1262,8 +1259,7 @@ class TestEmailVerificationToken:
         """
         # Create token that expires in 1 hour
         token = EmailVerificationTokenFactory(
-            user=user,
-            expires_at=timezone.now() + timedelta(hours=1)
+            user=user, expires_at=timezone.now() + timedelta(hours=1)
         )
 
         # Token is valid now
@@ -1287,7 +1283,7 @@ class TestEmailVerificationToken:
         token = EmailVerificationTokenFactory(
             user=user,
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
-            expires_at=timezone.now() + timedelta(hours=24)
+            expires_at=timezone.now() + timedelta(hours=24),
         )
 
         # Valid at 23 hours

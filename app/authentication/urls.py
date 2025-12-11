@@ -66,8 +66,16 @@ urlpatterns = [
     path("deactivate/", DeactivateAccountView.as_view(), name="deactivate"),
     # Biometric authentication (Face ID / Touch ID)
     path("biometric/enroll/", BiometricEnrollView.as_view(), name="biometric-enroll"),
-    path("biometric/challenge/", BiometricChallengeView.as_view(), name="biometric-challenge"),
-    path("biometric/authenticate/", BiometricAuthenticateView.as_view(), name="biometric-authenticate"),
+    path(
+        "biometric/challenge/",
+        BiometricChallengeView.as_view(),
+        name="biometric-challenge",
+    ),
+    path(
+        "biometric/authenticate/",
+        BiometricAuthenticateView.as_view(),
+        name="biometric-authenticate",
+    ),
     path("biometric/", BiometricDisableView.as_view(), name="biometric-disable"),
     path("biometric/status/", BiometricStatusView.as_view(), name="biometric-status"),
 ]

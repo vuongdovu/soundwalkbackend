@@ -27,7 +27,7 @@ Dependencies:
 """
 
 import logging
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -99,10 +99,8 @@ class TestCustomAccountAdapter:
         user = UserFactory.build(email="newuser@example.com")
 
         with patch.object(
-            CustomAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
-        ) as mock_parent:
+            CustomAccountAdapter.__bases__[0], "save_user", return_value=user
+        ):
             # The parent save_user would normally save the user
             # We simulate that by saving manually for our test
             user.save()
@@ -127,9 +125,7 @@ class TestCustomAccountAdapter:
         user = UserFactory.build(email="unique@example.com")
 
         with patch.object(
-            CustomAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -154,16 +150,19 @@ class TestCustomAccountAdapter:
         user = UserFactory.build(email="uncommitted@example.com")
 
         with patch.object(
-            CustomAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             # Act: Call with commit=False
             adapter.save_user(mock_request, user, mock_form, commit=False)
 
         # Assert: No LinkedAccount exists for this user
         # Note: We filter by email since user isn't saved (no pk)
-        assert LinkedAccount.objects.filter(provider_user_id="uncommitted@example.com").count() == 0
+        assert (
+            LinkedAccount.objects.filter(
+                provider_user_id="uncommitted@example.com"
+            ).count()
+            == 0
+        )
 
     def test_save_user_uses_get_or_create_for_idempotency(
         self, db, adapter, mock_request, mock_form
@@ -179,14 +178,12 @@ class TestCustomAccountAdapter:
         LinkedAccount.objects.create(
             user=user,
             provider=LinkedAccount.Provider.EMAIL,
-            provider_user_id=user.email
+            provider_user_id=user.email,
         )
         initial_count = LinkedAccount.objects.count()
 
         with patch.object(
-            CustomAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             # Act: Call save_user again (simulating retry)
             adapter.save_user(mock_request, user, mock_form, commit=True)
@@ -207,9 +204,7 @@ class TestCustomAccountAdapter:
         user = UserFactory.build(email="logged@example.com")
 
         with patch.object(
-            CustomAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -233,9 +228,7 @@ class TestCustomAccountAdapter:
         user = UserFactory.build(email="return@example.com")
 
         with patch.object(
-            CustomAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -302,7 +295,7 @@ class TestCustomSocialAccountAdapter:
             "email_verified": True,
             "given_name": "Google",
             "family_name": "User",
-            "picture": "https://example.com/photo.jpg"
+            "picture": "https://example.com/photo.jpg",
         }
         sociallogin.user = user
 
@@ -325,7 +318,7 @@ class TestCustomSocialAccountAdapter:
             "sub": "apple-uid-789012",
             "email": "appleuser@privaterelay.apple.com",
             "email_verified": True,
-            "is_private_email": True
+            "is_private_email": True,
         }
         sociallogin.user = user
 
@@ -349,9 +342,7 @@ class TestCustomSocialAccountAdapter:
         user.email_verified = False  # Explicitly set to False
 
         with patch.object(
-            CustomSocialAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomSocialAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -375,9 +366,7 @@ class TestCustomSocialAccountAdapter:
         user = mock_sociallogin_google.user
 
         with patch.object(
-            CustomSocialAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomSocialAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -401,9 +390,7 @@ class TestCustomSocialAccountAdapter:
         user = mock_sociallogin_apple.user
 
         with patch.object(
-            CustomSocialAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomSocialAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -428,9 +415,7 @@ class TestCustomSocialAccountAdapter:
         user = mock_sociallogin_google.user
 
         with patch.object(
-            CustomSocialAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomSocialAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -454,9 +439,7 @@ class TestCustomSocialAccountAdapter:
         user = mock_sociallogin_google.user
 
         with patch.object(
-            CustomSocialAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomSocialAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -480,9 +463,7 @@ class TestCustomSocialAccountAdapter:
         user = mock_sociallogin_google.user
 
         with patch.object(
-            CustomSocialAccountAdapter.__bases__[0],
-            "save_user",
-            return_value=user
+            CustomSocialAccountAdapter.__bases__[0], "save_user", return_value=user
         ):
             user.save()
 
@@ -507,15 +488,12 @@ class TestCustomSocialAccountAdapter:
         first_name/last_name fields.
         """
         # Arrange
-        data = {
-            "given_name": "John",
-            "family_name": "Doe"
-        }
+        data = {"given_name": "John", "family_name": "Doe"}
 
         with patch.object(
             CustomSocialAccountAdapter.__bases__[0],
             "populate_user",
-            return_value=mock_sociallogin_google.user
+            return_value=mock_sociallogin_google.user,
         ):
             # Act
             adapter.populate_user(mock_request, mock_sociallogin_google, data)
@@ -537,13 +515,13 @@ class TestCustomSocialAccountAdapter:
         data = {
             "given_name": "Google",
             "family_name": "User",
-            "name": "Google User"  # Also provided but we use specific fields
+            "name": "Google User",  # Also provided but we use specific fields
         }
 
         with patch.object(
             CustomSocialAccountAdapter.__bases__[0],
             "populate_user",
-            return_value=mock_sociallogin_google.user
+            return_value=mock_sociallogin_google.user,
         ):
             # Act
             adapter.populate_user(mock_request, mock_sociallogin_google, data)
@@ -562,15 +540,12 @@ class TestCustomSocialAccountAdapter:
         The adapter should not crash and should store empty strings.
         """
         # Arrange: Data without name fields
-        data = {
-            "email": "noname@gmail.com",
-            "email_verified": True
-        }
+        data = {"email": "noname@gmail.com", "email_verified": True}
 
         with patch.object(
             CustomSocialAccountAdapter.__bases__[0],
             "populate_user",
-            return_value=mock_sociallogin_google.user
+            return_value=mock_sociallogin_google.user,
         ):
             # Act: Should not raise
             adapter.populate_user(mock_request, mock_sociallogin_google, data)
@@ -594,7 +569,7 @@ class TestCustomSocialAccountAdapter:
         with patch.object(
             CustomSocialAccountAdapter.__bases__[0],
             "populate_user",
-            return_value=mock_sociallogin_google.user
+            return_value=mock_sociallogin_google.user,
         ):
             # Act
             result = adapter.populate_user(mock_request, mock_sociallogin_google, data)
@@ -703,11 +678,8 @@ class TestCustomSocialAccountAdapter:
         # Arrange: Apple sends user info in request.data
         mock_request.data = {
             "user": {
-                "name": {
-                    "firstName": "Apple",
-                    "lastName": "User"
-                },
-                "email": "appleuser@privaterelay.apple.com"
+                "name": {"firstName": "Apple", "lastName": "User"},
+                "email": "appleuser@privaterelay.apple.com",
             }
         }
         data = {}  # Provider data doesn't have name for Apple
@@ -748,11 +720,7 @@ class TestCustomSocialAccountAdapter:
         Why it matters: User might exist but without name info.
         """
         # Arrange: User object but no name
-        mock_request.data = {
-            "user": {
-                "email": "appleuser@privaterelay.apple.com"
-            }
-        }
+        mock_request.data = {"user": {"email": "appleuser@privaterelay.apple.com"}}
         data = {}
 
         # Act: Should not raise
@@ -762,22 +730,14 @@ class TestCustomSocialAccountAdapter:
         assert first_name == ""
         assert last_name == ""
 
-    def test_extract_apple_name_handles_partial_name_data(
-        self, adapter, mock_request
-    ):
+    def test_extract_apple_name_handles_partial_name_data(self, adapter, mock_request):
         """
         _extract_apple_name handles partial name data.
 
         Why it matters: User might have only first or last name.
         """
         # Arrange: Only firstName provided
-        mock_request.data = {
-            "user": {
-                "name": {
-                    "firstName": "OnlyFirst"
-                }
-            }
-        }
+        mock_request.data = {"user": {"name": {"firstName": "OnlyFirst"}}}
         data = {}
 
         # Act
@@ -811,11 +771,7 @@ class TestCustomSocialAccountAdapter:
         Why it matters: Defensive coding against malformed requests.
         """
         # Arrange: name is not a dict
-        mock_request.data = {
-            "user": {
-                "name": "not-a-dict"
-            }
-        }
+        mock_request.data = {"user": {"name": "not-a-dict"}}
         data = {}
 
         # Act: Should not raise
@@ -825,9 +781,7 @@ class TestCustomSocialAccountAdapter:
         assert first_name == ""
         assert last_name == ""
 
-    def test_extract_apple_name_handles_request_without_data_attribute(
-        self, adapter
-    ):
+    def test_extract_apple_name_handles_request_without_data_attribute(self, adapter):
         """
         _extract_apple_name handles request without data attribute.
 
@@ -858,19 +812,14 @@ class TestCustomSocialAccountAdapter:
         """
         # Arrange: Apple user data in request
         mock_request.data = {
-            "user": {
-                "name": {
-                    "firstName": "Apple",
-                    "lastName": "Tester"
-                }
-            }
+            "user": {"name": {"firstName": "Apple", "lastName": "Tester"}}
         }
         data = {}  # Provider data doesn't have name
 
         with patch.object(
             CustomSocialAccountAdapter.__bases__[0],
             "populate_user",
-            return_value=mock_sociallogin_apple.user
+            return_value=mock_sociallogin_apple.user,
         ):
             # Act
             adapter.populate_user(mock_request, mock_sociallogin_apple, data)
@@ -883,9 +832,7 @@ class TestCustomSocialAccountAdapter:
     # authentication_error Tests
     # -------------------------------------------------------------------------
 
-    def test_authentication_error_logs_the_error(
-        self, adapter, mock_request, caplog
-    ):
+    def test_authentication_error_logs_the_error(self, adapter, mock_request, caplog):
         """
         authentication_error logs the authentication failure.
 
@@ -912,15 +859,13 @@ class TestCustomSocialAccountAdapter:
                     provider_id,
                     error=error,
                     exception=exception,
-                    extra_context=extra_context
+                    extra_context=extra_context,
                 )
 
         # Assert: Error was logged
         assert "Social authentication error" in caplog.text
 
-    def test_authentication_error_logs_provider_id(
-        self, adapter, mock_request, caplog
-    ):
+    def test_authentication_error_logs_provider_id(self, adapter, mock_request, caplog):
         """
         authentication_error includes provider_id in log extra data.
 
@@ -935,18 +880,17 @@ class TestCustomSocialAccountAdapter:
             # Act
             with caplog.at_level(logging.ERROR, logger="authentication.adapters"):
                 adapter.authentication_error(
-                    mock_request,
-                    provider_id,
-                    error="some_error"
+                    mock_request, provider_id, error="some_error"
                 )
 
         # Assert: Error was logged (provider is in extra data, not message)
         assert any(
-            "Social authentication error" in record.message
-            for record in caplog.records
+            "Social authentication error" in record.message for record in caplog.records
         )
         # Verify the log record has the provider in extra data
-        error_records = [r for r in caplog.records if "Social authentication error" in r.message]
+        error_records = [
+            r for r in caplog.records if "Social authentication error" in r.message
+        ]
         assert len(error_records) == 1
 
     def test_authentication_error_handles_none_exception(
@@ -967,18 +911,13 @@ class TestCustomSocialAccountAdapter:
             # Act: Should not raise
             with caplog.at_level(logging.ERROR, logger="authentication.adapters"):
                 adapter.authentication_error(
-                    mock_request,
-                    provider_id,
-                    error=error,
-                    exception=None
+                    mock_request, provider_id, error=error, exception=None
                 )
 
         # Assert: Logged without exception info
         assert "Social authentication error" in caplog.text
 
-    def test_authentication_error_calls_parent_method(
-        self, adapter, mock_request
-    ):
+    def test_authentication_error_calls_parent_method(self, adapter, mock_request):
         """
         authentication_error calls super().authentication_error().
 
@@ -1003,21 +942,15 @@ class TestCustomSocialAccountAdapter:
                 provider_id,
                 error=error,
                 exception=exception,
-                extra_context=extra_context
+                extra_context=extra_context,
             )
 
         # Assert: Parent method was called with same arguments
         mock_parent_method.assert_called_once_with(
-            mock_request,
-            provider_id,
-            error,
-            exception,
-            extra_context
+            mock_request, provider_id, error, exception, extra_context
         )
 
-    def test_authentication_error_returns_parent_result(
-        self, adapter, mock_request
-    ):
+    def test_authentication_error_returns_parent_result(self, adapter, mock_request):
         """
         authentication_error returns whatever the parent returns.
 
@@ -1030,11 +963,7 @@ class TestCustomSocialAccountAdapter:
             mock_super.return_value.authentication_error.return_value = expected_return
 
             # Act
-            result = adapter.authentication_error(
-                mock_request,
-                "google",
-                error="test"
-            )
+            result = adapter.authentication_error(mock_request, "google", error="test")
 
         # Assert
         assert result == expected_return
@@ -1060,7 +989,7 @@ class TestAdapterIntegration:
         Why it matters: Verifies the complete flow from adapter to database.
         """
         # Arrange
-        adapter = CustomAccountAdapter()
+        CustomAccountAdapter()
         user = UserFactory(email="integration@example.com")
 
         # Act: Directly call the LinkedAccount creation logic

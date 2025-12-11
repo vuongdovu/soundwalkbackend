@@ -130,7 +130,9 @@ class StripeService:
         #
         # logger.info(f"Created Stripe customer {customer.id} for user {user.id}")
         # return customer.id
-        logger.info(f"get_or_create_customer called for user {user.id} (not implemented)")
+        logger.info(
+            f"get_or_create_customer called for user {user.id} (not implemented)"
+        )
         return ""
 
     @staticmethod
@@ -235,9 +237,7 @@ class StripeService:
         #
         # logger.info(f"Canceled subscription {subscription.stripe_subscription_id}")
         # return subscription
-        logger.info(
-            f"cancel_subscription called for {subscription} (not implemented)"
-        )
+        logger.info(f"cancel_subscription called for {subscription} (not implemented)")
         return subscription
 
     @staticmethod

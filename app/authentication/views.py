@@ -40,7 +40,12 @@ Note:
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from dj_rest_auth.registration.views import SocialLoginView
-from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter, OpenApiResponse
+from drf_spectacular.utils import (
+    extend_schema,
+    OpenApiExample,
+    OpenApiParameter,
+    OpenApiResponse,
+)
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -265,8 +270,7 @@ class EmailVerificationView(APIView):
         token = request.data.get("token")
         if not token:
             return Response(
-                {"detail": "Token is required"},
-                status=status.HTTP_400_BAD_REQUEST
+                {"detail": "Token is required"}, status=status.HTTP_400_BAD_REQUEST
             )
 
         success, message = AuthService.verify_email(token)
@@ -274,10 +278,7 @@ class EmailVerificationView(APIView):
         if success:
             return Response({"detail": message})
         else:
-            return Response(
-                {"detail": message},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({"detail": message}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ResendEmailView(APIView):
@@ -301,7 +302,7 @@ class ResendEmailView(APIView):
         if request.user.email_verified:
             return Response(
                 {"detail": "Email is already verified"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         AuthService.send_verification_email(request.user)
@@ -384,7 +385,9 @@ class BiometricEnrollView(APIView):
                 examples=[
                     OpenApiExample(
                         "Invalid Key",
-                        value={"detail": "Invalid EC public key format. Must be P-256 curve."},
+                        value={
+                            "detail": "Invalid EC public key format. Must be P-256 curve."
+                        },
                     ),
                 ],
             ),
@@ -429,6 +432,7 @@ class BiometricEnrollView(APIView):
             )
 
         from django.utils import timezone
+
         return Response({"enrolled_at": timezone.now()})
 
 
@@ -461,7 +465,10 @@ class BiometricChallengeView(APIView):
                 examples=[
                     OpenApiExample(
                         "Success",
-                        value={"challenge": "dGhpcyBpcyBhIHRlc3QgY2hhbGxlbmdl...", "expires_in": 300},
+                        value={
+                            "challenge": "dGhpcyBpcyBhIHRlc3QgY2hhbGxlbmdl...",
+                            "expires_in": 300,
+                        },
                     ),
                 ],
             ),
@@ -470,7 +477,10 @@ class BiometricChallengeView(APIView):
                 examples=[
                     OpenApiExample(
                         "Not Enabled",
-                        value={"error": "biometric_not_enabled", "detail": "Biometric authentication is not enabled for this user"},
+                        value={
+                            "error": "biometric_not_enabled",
+                            "detail": "Biometric authentication is not enabled for this user",
+                        },
                     ),
                 ],
             ),
@@ -571,11 +581,17 @@ class BiometricAuthenticateView(APIView):
                 examples=[
                     OpenApiExample(
                         "Invalid Signature",
-                        value={"error": "invalid_signature", "detail": "Signature verification failed"},
+                        value={
+                            "error": "invalid_signature",
+                            "detail": "Signature verification failed",
+                        },
                     ),
                     OpenApiExample(
                         "Expired Challenge",
-                        value={"error": "invalid_signature", "detail": "Challenge expired or not found"},
+                        value={
+                            "error": "invalid_signature",
+                            "detail": "Challenge expired or not found",
+                        },
                     ),
                 ],
             ),
@@ -632,19 +648,21 @@ class BiometricAuthenticateView(APIView):
 
         # Generate JWT tokens (same as dj-rest-auth login)
         from rest_framework_simplejwt.tokens import RefreshToken
-        from authentication.serializers import UserSerializer
 
         refresh = RefreshToken.for_user(user)
 
         # Update last login
         from django.contrib.auth import user_logged_in
+
         user_logged_in.send(sender=user.__class__, request=request, user=user)
 
-        return Response({
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user": UserSerializer(user).data,
-        })
+        return Response(
+            {
+                "access": str(refresh.access_token),
+                "refresh": str(refresh),
+                "user": UserSerializer(user).data,
+            }
+        )
 
 
 class BiometricDisableView(APIView):

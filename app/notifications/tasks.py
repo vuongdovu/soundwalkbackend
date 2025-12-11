@@ -83,9 +83,7 @@ def send_push_notification(
     #
     # logger.info(f"Sent {sent} push notifications to user {user_id}")
     # return sent
-    logger.info(
-        f"send_push_notification called for user {user_id} (not implemented)"
-    )
+    logger.info(f"send_push_notification called for user {user_id} (not implemented)")
     return 0
 
 
@@ -189,9 +187,7 @@ def send_email_notification(
     # if success:
     #     logger.info(f"Sent email notification to user {user_id}")
     # return success
-    logger.info(
-        f"send_email_notification called for user {user_id} (not implemented)"
-    )
+    logger.info(f"send_email_notification called for user {user_id} (not implemented)")
     return False
 
 

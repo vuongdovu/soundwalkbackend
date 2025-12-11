@@ -67,8 +67,7 @@ def send_verification_on_registration(sender, instance, created, **kwargs):
         from authentication.models import LinkedAccount
 
         is_email_registration = LinkedAccount.objects.filter(
-            user=instance,
-            provider=LinkedAccount.Provider.EMAIL
+            user=instance, provider=LinkedAccount.Provider.EMAIL
         ).exists()
 
         if is_email_registration:

@@ -182,9 +182,7 @@ def log_request(logger_name: str | None = None):
             log = logging.getLogger(logger_name or func.__module__)
 
             # Log request
-            user_str = (
-                str(request.user) if hasattr(request, "user") else "anonymous"
-            )
+            user_str = str(request.user) if hasattr(request, "user") else "anonymous"
             log.debug(
                 f"Request: {request.method} {request.path}",
                 extra={

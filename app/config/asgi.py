@@ -32,11 +32,11 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django_asgi_app = get_asgi_application()
 
 # Import Channels components after Django is initialized
-from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
+from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
+from channels.security.websocket import AllowedHostsOriginValidator  # noqa: E402
 
-from chat.middleware import JWTAuthMiddleware
-from chat.routing import websocket_urlpatterns
+from chat.middleware import JWTAuthMiddleware  # noqa: E402
+from chat.routing import websocket_urlpatterns  # noqa: E402
 
 # ASGI application that routes HTTP and WebSocket protocols
 application = ProtocolTypeRouter(

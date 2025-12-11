@@ -48,7 +48,6 @@ from authentication.models import (
 )
 from authentication.tests.factories import (
     UserFactory,
-    LinkedAccountFactory,
     EmailVerificationTokenFactory,
 )
 from core.helpers import generate_token
@@ -418,9 +417,7 @@ class TestEmailVerificationFlow:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_resend_creates_new_token(
-        self, authenticated_client_factory, monkeypatch
-    ):
+    def test_resend_creates_new_token(self, authenticated_client_factory, monkeypatch):
         """
         Resending verification email creates a new valid token.
 
@@ -981,14 +978,14 @@ class TestMultiProviderFlow:
         user = UserFactory(email_verified=True)
 
         # Link email provider
-        email_linked = LinkedAccount.objects.create(
+        LinkedAccount.objects.create(
             user=user,
             provider=LinkedAccount.Provider.EMAIL,
             provider_user_id=user.email,
         )
 
         # Link Google provider
-        google_linked = LinkedAccount.objects.create(
+        LinkedAccount.objects.create(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
             provider_user_id="google-uid-12345",
@@ -1028,9 +1025,7 @@ class TestMultiProviderFlow:
         assert user.linked_accounts.count() == 3
 
         # Verify each provider
-        providers = set(
-            user.linked_accounts.values_list("provider", flat=True)
-        )
+        providers = set(user.linked_accounts.values_list("provider", flat=True))
         assert providers == {
             LinkedAccount.Provider.EMAIL,
             LinkedAccount.Provider.GOOGLE,

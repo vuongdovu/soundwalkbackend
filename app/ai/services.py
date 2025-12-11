@@ -461,7 +461,7 @@ class AIService:
         #         })
         #
         # return models
-        logger.info(f"get_available_models called (not implemented)")
+        logger.info("get_available_models called (not implemented)")
         return [
             {"name": "gpt-4", "provider": "openai", "provider_name": "OpenAI"},
             {"name": "gpt-3.5-turbo", "provider": "openai", "provider_name": "OpenAI"},

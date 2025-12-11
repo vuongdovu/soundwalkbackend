@@ -31,25 +31,67 @@ from authentication.managers import UserManager
 
 
 # Reserved usernames that cannot be used
-RESERVED_USERNAMES = frozenset([
-    "admin", "administrator", "root", "system", "api", "www",
-    "mail", "email", "support", "help", "info", "contact",
-    "about", "terms", "privacy", "security", "account", "login",
-    "logout", "register", "signup", "signin", "signout", "auth",
-    "authentication", "user", "users", "profile", "profiles",
-    "settings", "config", "configuration", "dashboard", "home",
-    "index", "null", "undefined", "anonymous", "guest", "test",
-    "demo", "example", "official", "verified", "staff", "mod",
-    "moderator", "bot", "robot", "service", "notification",
-])
+RESERVED_USERNAMES = frozenset(
+    [
+        "admin",
+        "administrator",
+        "root",
+        "system",
+        "api",
+        "www",
+        "mail",
+        "email",
+        "support",
+        "help",
+        "info",
+        "contact",
+        "about",
+        "terms",
+        "privacy",
+        "security",
+        "account",
+        "login",
+        "logout",
+        "register",
+        "signup",
+        "signin",
+        "signout",
+        "auth",
+        "authentication",
+        "user",
+        "users",
+        "profile",
+        "profiles",
+        "settings",
+        "config",
+        "configuration",
+        "dashboard",
+        "home",
+        "index",
+        "null",
+        "undefined",
+        "anonymous",
+        "guest",
+        "test",
+        "demo",
+        "example",
+        "official",
+        "verified",
+        "staff",
+        "mod",
+        "moderator",
+        "bot",
+        "robot",
+        "service",
+        "notification",
+    ]
+)
 
 
 def validate_username_not_reserved(value):
     """Validate that username is not in the reserved list."""
     if value.lower() in RESERVED_USERNAMES:
-        raise ValidationError(
-            f"The username '{value}' is reserved and cannot be used."
-        )
+        raise ValidationError(f"The username '{value}' is reserved and cannot be used.")
 
 
 def validate_username_format(value):

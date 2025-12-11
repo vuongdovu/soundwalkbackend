@@ -22,14 +22,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from authentication.models import (
     User,
-    Profile,
     LinkedAccount,
     EmailVerificationToken,
     RESERVED_USERNAMES,
 )
 from authentication.tests.factories import (
     UserFactory,
-    ProfileFactory,
     LinkedAccountFactory,
     EmailVerificationTokenFactory,
 )
@@ -60,8 +58,7 @@ def unverified_user(db):
 def superuser(db):
     """Create a superuser with admin privileges."""
     return User.objects.create_superuser(
-        email="admin@example.com",
-        password="AdminPass123!"
+        email="admin@example.com", password="AdminPass123!"
     )
 
 
@@ -127,9 +124,7 @@ def profile(user):
 def linked_account_email(db, user):
     """Create email-linked account for user."""
     return LinkedAccountFactory(
-        user=user,
-        provider=LinkedAccount.Provider.EMAIL,
-        provider_user_id=user.email
+        user=user, provider=LinkedAccount.Provider.EMAIL, provider_user_id=user.email
     )
 
 
@@ -139,7 +134,7 @@ def linked_account_google(db, user):
     return LinkedAccountFactory(
         user=user,
         provider=LinkedAccount.Provider.GOOGLE,
-        provider_user_id="google-uid-123"
+        provider_user_id="google-uid-123",
     )
 
 
@@ -149,7 +144,7 @@ def linked_account_apple(db, user):
     return LinkedAccountFactory(
         user=user,
         provider=LinkedAccount.Provider.APPLE,
-        provider_user_id="apple-uid-456"
+        provider_user_id="apple-uid-456",
     )
 
 
@@ -165,7 +160,7 @@ def valid_verification_token(db, user):
         user=user,
         token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         expires_at=timezone.now() + timedelta(hours=24),
-        used_at=None
+        used_at=None,
     )
 
 
@@ -176,7 +171,7 @@ def expired_verification_token(db, user):
         user=user,
         token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         expires_at=timezone.now() - timedelta(hours=1),
-        used_at=None
+        used_at=None,
     )
 
 
@@ -187,7 +182,7 @@ def used_verification_token(db, user):
         user=user,
         token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         expires_at=timezone.now() + timedelta(hours=24),
-        used_at=timezone.now() - timedelta(minutes=30)
+        used_at=timezone.now() - timedelta(minutes=30),
     )
 
 
@@ -198,7 +193,7 @@ def password_reset_token(db, user):
         user=user,
         token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
         expires_at=timezone.now() + timedelta(hours=1),
-        used_at=None
+        used_at=None,
     )
 
 
@@ -209,7 +204,7 @@ def expired_password_reset_token(db, user):
         user=user,
         token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
         expires_at=timezone.now() - timedelta(minutes=30),
-        used_at=None
+        used_at=None,
     )
 
 
@@ -247,11 +242,13 @@ def authenticated_client_factory(db):
             client = authenticated_client_factory(some_user)
             response = client.get('/api/v1/auth/profile/')
     """
+
     def _make_client(user):
         client = APIClient()
         refresh = RefreshToken.for_user(user)
         client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
         return client
+
     return _make_client
 
 
@@ -277,7 +274,7 @@ def mock_google_oauth(mocker):
         "email_verified": True,
         "given_name": "Google",
         "family_name": "User",
-        "picture": "https://example.com/photo.jpg"
+        "picture": "https://example.com/photo.jpg",
     }
     return mock_response
 
@@ -307,7 +304,7 @@ def mock_apple_oauth(mocker):
         "sub": "apple-uid-456",
         "email": "appleuser@privaterelay.apple.com",
         "email_verified": True,
-        "is_private_email": True
+        "is_private_email": True,
     }
     return mock_response
 
@@ -346,7 +343,7 @@ def valid_registration_data():
     return {
         "email": "newuser@example.com",
         "password1": "SecurePass123!",
-        "password2": "SecurePass123!"
+        "password2": "SecurePass123!",
     }
 
 
@@ -358,7 +355,7 @@ def valid_profile_data():
         "first_name": "Test",
         "last_name": "User",
         "timezone": "America/New_York",
-        "preferences": {"theme": "dark", "language": "en"}
+        "preferences": {"theme": "dark", "language": "en"},
     }
 
 
@@ -372,15 +369,15 @@ def reserved_usernames():
 def invalid_usernames():
     """List of invalid usernames for format validation testing."""
     return [
-        "ab",              # Too short (2 chars)
-        "a" * 31,          # Too long (31 chars)
-        "user name",       # Contains space
-        "user@name",       # Contains @
-        "user.name",       # Contains period
-        "user!name",       # Contains exclamation
-        "",                # Empty string
-        "user/name",       # Contains slash
-        "user#name",       # Contains hash
+        "ab",  # Too short (2 chars)
+        "a" * 31,  # Too long (31 chars)
+        "user name",  # Contains space
+        "user@name",  # Contains @
+        "user.name",  # Contains period
+        "user!name",  # Contains exclamation
+        "",  # Empty string
+        "user/name",  # Contains slash
+        "user#name",  # Contains hash
     ]
 
 
@@ -388,14 +385,14 @@ def invalid_usernames():
 def valid_usernames():
     """List of valid usernames for format validation testing."""
     return [
-        "abc",             # Minimum 3 chars
-        "user123",         # Alphanumeric
-        "user_name",       # With underscore
-        "user-name",       # With hyphen
-        "a" * 30,          # Maximum 30 chars
-        "User123",         # Mixed case (will be normalized)
-        "123user",         # Starting with number
-        "_user_",          # Starting/ending with underscore
-        "---",             # All hyphens
-        "___",             # All underscores
+        "abc",  # Minimum 3 chars
+        "user123",  # Alphanumeric
+        "user_name",  # With underscore
+        "user-name",  # With hyphen
+        "a" * 30,  # Maximum 30 chars
+        "User123",  # Mixed case (will be normalized)
+        "123user",  # Starting with number
+        "_user_",  # Starting/ending with underscore
+        "---",  # All hyphens
+        "___",  # All underscores
     ]

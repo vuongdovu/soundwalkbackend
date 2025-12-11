@@ -134,7 +134,7 @@ class AnthropicProvider(BaseProviderImpl):
         #     },
         #     "finish_reason": response.stop_reason,
         # }
-        logger.info(f"Anthropic complete called (not implemented)")
+        logger.info("Anthropic complete called (not implemented)")
         return {
             "content": "Anthropic completion not implemented",
             "model": model or self.default_model,
@@ -182,7 +182,7 @@ class AnthropicProvider(BaseProviderImpl):
         # ) as stream:
         #     for text in stream.text_stream:
         #         yield text
-        logger.info(f"Anthropic stream_complete called (not implemented)")
+        logger.info("Anthropic stream_complete called (not implemented)")
         yield "Anthropic streaming not implemented"
 
     def count_tokens(self, text: str, model: str | None = None) -> int:

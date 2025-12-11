@@ -85,7 +85,9 @@ def send_message_notifications(self, message_id: int) -> int:
     #
     # logger.info(f"Sent {notified} notifications for message {message_id}")
     # return notified
-    logger.info(f"send_message_notifications called for message {message_id} (not implemented)")
+    logger.info(
+        f"send_message_notifications called for message {message_id} (not implemented)"
+    )
     return 0
 
 

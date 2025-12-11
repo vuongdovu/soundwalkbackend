@@ -19,10 +19,9 @@ Related files:
 """
 
 import logging
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
 import pytest
-from django.db import transaction
 
 from authentication.models import (
     User,
@@ -30,7 +29,6 @@ from authentication.models import (
     LinkedAccount,
 )
 from authentication.tests.factories import (
-    UserFactory,
     LinkedAccountFactory,
 )
 
@@ -62,8 +60,7 @@ class TestCreateUserProfileSignal:
         """
         # Act: Create a new user (signals fire automatically)
         user = User.objects.create_user(
-            email="newuser@example.com",
-            password="SecurePass123!"
+            email="newuser@example.com", password="SecurePass123!"
         )
 
         # Assert: Profile exists and is linked to the user
@@ -80,8 +77,7 @@ class TestCreateUserProfileSignal:
         """
         # Act: Create user
         user = User.objects.create_user(
-            email="newuser@example.com",
-            password="SecurePass123!"
+            email="newuser@example.com", password="SecurePass123!"
         )
 
         # Assert: Profile fields are empty
@@ -122,7 +118,7 @@ class TestCreateUserProfileSignal:
         user = User.objects.create_user(
             email="oauth@gmail.com",
             password=None,  # OAuth users may not have password
-            email_verified=True
+            email_verified=True,
         )
 
         # Assert: Profile exists
@@ -138,9 +134,8 @@ class TestCreateUserProfileSignal:
         # Arrange: Set log level to capture DEBUG
         with caplog.at_level(logging.DEBUG, logger="authentication.signals"):
             # Act: Create user
-            user = User.objects.create_user(
-                email="logged@example.com",
-                password="SecurePass123!"
+            User.objects.create_user(
+                email="logged@example.com", password="SecurePass123!"
             )
 
         # Assert: Log message contains expected text
@@ -158,14 +153,14 @@ class TestCreateUserProfileSignal:
         """
         # Arrange: Create user and verify profile exists
         user = User.objects.create_user(
-            email="race@example.com",
-            password="SecurePass123!"
+            email="race@example.com", password="SecurePass123!"
         )
         assert Profile.objects.filter(user=user).count() == 1
 
         # Act: Manually call the signal handler again (simulating race condition)
         # This should not create a duplicate due to get_or_create
         from authentication.signals import create_user_profile
+
         create_user_profile(sender=User, instance=user, created=True)
 
         # Assert: Still only one Profile
@@ -204,23 +199,20 @@ class TestSendVerificationOnRegistrationSignal:
             user = User.objects.create_user(
                 email="emailuser@example.com",
                 password="SecurePass123!",
-                email_verified=False
+                email_verified=False,
             )
             LinkedAccountFactory(
                 user=user,
                 provider=LinkedAccount.Provider.EMAIL,
-                provider_user_id=user.email
+                provider_user_id=user.email,
             )
 
             # Note: The signal fires on user creation, but LinkedAccount
             # is created after. In real code, this would be in a transaction.
             # For testing the signal logic, we call it manually.
             from authentication.signals import send_verification_on_registration
-            send_verification_on_registration(
-                sender=User,
-                instance=user,
-                created=True
-            )
+
+            send_verification_on_registration(sender=User, instance=user, created=True)
 
         # Assert: Log shows verification would be sent
         assert any(
@@ -241,21 +233,18 @@ class TestSendVerificationOnRegistrationSignal:
             user = User.objects.create_user(
                 email="oauth@gmail.com",
                 password=None,
-                email_verified=True  # OAuth users are verified
+                email_verified=True,  # OAuth users are verified
             )
             LinkedAccountFactory(
                 user=user,
                 provider=LinkedAccount.Provider.GOOGLE,
-                provider_user_id="google-uid-123"
+                provider_user_id="google-uid-123",
             )
 
             # Call signal manually to test logic
             from authentication.signals import send_verification_on_registration
-            send_verification_on_registration(
-                sender=User,
-                instance=user,
-                created=True
-            )
+
+            send_verification_on_registration(sender=User, instance=user, created=True)
 
         # Assert: No verification email log (already verified)
         assert not any(
@@ -274,20 +263,17 @@ class TestSendVerificationOnRegistrationSignal:
             user = User.objects.create_user(
                 email="verified@example.com",
                 password="SecurePass123!",
-                email_verified=True  # Already verified
+                email_verified=True,  # Already verified
             )
             LinkedAccountFactory(
                 user=user,
                 provider=LinkedAccount.Provider.EMAIL,
-                provider_user_id=user.email
+                provider_user_id=user.email,
             )
 
             from authentication.signals import send_verification_on_registration
-            send_verification_on_registration(
-                sender=User,
-                instance=user,
-                created=True
-            )
+
+            send_verification_on_registration(sender=User, instance=user, created=True)
 
         # Assert: No verification email (already verified)
         assert not any(
@@ -307,16 +293,17 @@ class TestSendVerificationOnRegistrationSignal:
         LinkedAccountFactory(
             user=user,
             provider=LinkedAccount.Provider.EMAIL,
-            provider_user_id=user.email
+            provider_user_id=user.email,
         )
 
         with caplog.at_level(logging.DEBUG, logger="authentication.signals"):
             # Act: Update user (simulates post_save with created=False)
             from authentication.signals import send_verification_on_registration
+
             send_verification_on_registration(
                 sender=User,
                 instance=user,
-                created=False  # Not a new user
+                created=False,  # Not a new user
             )
 
         # Assert: No verification email (not a new user)
@@ -337,16 +324,13 @@ class TestSendVerificationOnRegistrationSignal:
             user = User.objects.create_user(
                 email="nolinked@example.com",
                 password="SecurePass123!",
-                email_verified=False
+                email_verified=False,
             )
             # No LinkedAccount created
 
             from authentication.signals import send_verification_on_registration
-            send_verification_on_registration(
-                sender=User,
-                instance=user,
-                created=True
-            )
+
+            send_verification_on_registration(sender=User, instance=user, created=True)
 
         # Assert: No verification email (no email LinkedAccount)
         assert not any(
@@ -403,13 +387,12 @@ class TestLogEmailVerificationSignal:
             User.objects.create_user(
                 email="newverified@example.com",
                 password="SecurePass123!",
-                email_verified=True
+                email_verified=True,
             )
 
         # Assert: No verification log (creation, not update)
         assert not any(
-            "Email verified for user:" in record.message
-            for record in caplog.records
+            "Email verified for user:" in record.message for record in caplog.records
         ), "Should NOT log verification on user creation"
 
     def test_not_triggered_without_update_fields(self, unverified_user, caplog):
@@ -427,8 +410,7 @@ class TestLogEmailVerificationSignal:
         # Assert: No verification log (update_fields not specified)
         # Note: Django passes update_fields=None to signal when not specified
         assert not any(
-            "Email verified for user:" in record.message
-            for record in caplog.records
+            "Email verified for user:" in record.message for record in caplog.records
         ), "Should NOT log without update_fields"
 
     def test_not_triggered_for_other_field_updates(self, user, caplog):
@@ -444,8 +426,7 @@ class TestLogEmailVerificationSignal:
 
         # Assert: No verification log (different field)
         assert not any(
-            "Email verified for user:" in record.message
-            for record in caplog.records
+            "Email verified for user:" in record.message for record in caplog.records
         ), "Should NOT log for other field updates"
 
     def test_not_triggered_when_email_verified_stays_false(self, db, caplog):
@@ -458,7 +439,7 @@ class TestLogEmailVerificationSignal:
         user = User.objects.create_user(
             email="staysfalse@example.com",
             password="SecurePass123!",
-            email_verified=False
+            email_verified=False,
         )
 
         with caplog.at_level(logging.INFO, logger="authentication.signals"):
@@ -467,8 +448,7 @@ class TestLogEmailVerificationSignal:
 
         # Assert: No verification log (still False)
         assert not any(
-            "Email verified for user:" in record.message
-            for record in caplog.records
+            "Email verified for user:" in record.message for record in caplog.records
         ), "Should NOT log when email_verified stays False"
 
     def test_signal_handler_directly_with_created_false(self, user, caplog):
@@ -488,13 +468,12 @@ class TestLogEmailVerificationSignal:
                 sender=User,
                 instance=user,
                 created=False,
-                update_fields=["email_verified"]
+                update_fields=["email_verified"],
             )
 
         # Assert: Verification logged
         assert any(
-            "Email verified for user:" in record.message
-            for record in caplog.records
+            "Email verified for user:" in record.message for record in caplog.records
         ), "Direct handler call should log verification"
 
 
@@ -553,9 +532,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal handler
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Profile first_name is populated
@@ -581,9 +558,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal handler
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Profile last_name is populated
@@ -610,9 +585,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Existing first_name preserved, last_name populated
@@ -620,9 +593,7 @@ class TestPopulateProfileFromSocialSignal:
         assert user.profile.first_name == "ExistingFirst", (
             "Existing first_name should NOT be overwritten"
         )
-        assert user.profile.last_name == "Doe", (
-            "Empty last_name should be populated"
-        )
+        assert user.profile.last_name == "Doe", "Empty last_name should be populated"
 
     def test_does_not_overwrite_existing_last_name(
         self, user, mock_sociallogin, mock_request
@@ -642,16 +613,12 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: first_name populated, existing last_name preserved
         user.profile.refresh_from_db()
-        assert user.profile.first_name == "John", (
-            "Empty first_name should be populated"
-        )
+        assert user.profile.first_name == "John", "Empty first_name should be populated"
         assert user.profile.last_name == "ExistingLast", (
             "Existing last_name should NOT be overwritten"
         )
@@ -675,9 +642,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal (should not raise)
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Profile unchanged, no errors
@@ -709,9 +674,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Names populated from Google format
@@ -748,9 +711,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: first_name/last_name preferred
@@ -783,9 +744,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Names populated from Apple format
@@ -818,9 +777,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the social signal (should work because profile exists)
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Names populated successfully
@@ -846,9 +803,7 @@ class TestPopulateProfileFromSocialSignal:
         with caplog.at_level(logging.DEBUG, logger="authentication.signals"):
             # Act: Fire the signal
             populate_profile_from_social(
-                sender=None,
-                request=mock_request,
-                sociallogin=mock_sociallogin
+                sender=None, request=mock_request, sociallogin=mock_sociallogin
             )
 
         # Assert: Population logged
@@ -880,15 +835,12 @@ class TestPopulateProfileFromSocialSignal:
         with caplog.at_level(logging.DEBUG, logger="authentication.signals"):
             # Act: Fire the signal
             populate_profile_from_social(
-                sender=None,
-                request=mock_request,
-                sociallogin=mock_sociallogin
+                sender=None, request=mock_request, sociallogin=mock_sociallogin
             )
 
         # Assert: No "Profile populated" log (nothing was updated)
         assert not any(
-            "Profile populated from" in record.message
-            for record in caplog.records
+            "Profile populated from" in record.message for record in caplog.records
         ), "Should NOT log profile population when nothing changed"
 
         # Verify data unchanged
@@ -896,9 +848,7 @@ class TestPopulateProfileFromSocialSignal:
         assert user.profile.first_name == "ExistingFirst", "Name unchanged"
         assert user.profile.last_name == "ExistingLast", "Name unchanged"
 
-    def test_handles_none_extra_data_values(
-        self, user, mock_sociallogin, mock_request
-    ):
+    def test_handles_none_extra_data_values(self, user, mock_sociallogin, mock_request):
         """
         Verify signal handles None values in extra_data gracefully.
 
@@ -918,9 +868,7 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal (should not raise)
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Profile unchanged (None treated as empty)
@@ -928,9 +876,7 @@ class TestPopulateProfileFromSocialSignal:
         assert user.profile.first_name == "", "first_name should remain empty"
         assert user.profile.last_name == "", "last_name should remain empty"
 
-    def test_partial_name_update(
-        self, user, mock_sociallogin, mock_request
-    ):
+    def test_partial_name_update(self, user, mock_sociallogin, mock_request):
         """
         Verify only missing names are populated.
 
@@ -946,16 +892,12 @@ class TestPopulateProfileFromSocialSignal:
 
         # Act: Fire the signal
         populate_profile_from_social(
-            sender=None,
-            request=mock_request,
-            sociallogin=mock_sociallogin
+            sender=None, request=mock_request, sociallogin=mock_sociallogin
         )
 
         # Assert: Only first_name populated
         user.profile.refresh_from_db()
-        assert user.profile.first_name == "John", (
-            "Empty first_name should be populated"
-        )
+        assert user.profile.first_name == "John", "Empty first_name should be populated"
         assert user.profile.last_name == "ExistingLast", (
             "Existing last_name should be preserved"
         )
@@ -993,7 +935,7 @@ class TestSignalIntegration:
             user = User.objects.create_user(
                 email="register@example.com",
                 password="SecurePass123!",
-                email_verified=False
+                email_verified=False,
             )
 
         # Assert: Profile created
@@ -1013,9 +955,7 @@ class TestSignalIntegration:
         with caplog.at_level(logging.DEBUG, logger="authentication.signals"):
             # Act: Simulate OAuth registration
             user = User.objects.create_user(
-                email="oauth@example.com",
-                password=None,
-                email_verified=True
+                email="oauth@example.com", password=None, email_verified=True
             )
 
         # Assert: Profile created, no verification email

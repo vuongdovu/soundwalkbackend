@@ -34,7 +34,6 @@ Dependencies:
 
 from datetime import timedelta
 from io import BytesIO
-from unittest.mock import MagicMock
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -53,8 +52,6 @@ from authentication.models import (
 from authentication.services import AuthService
 from authentication.tests.factories import (
     UserFactory,
-    ProfileFactory,
-    LinkedAccountFactory,
     EmailVerificationTokenFactory,
 )
 
@@ -81,9 +78,7 @@ def create_test_image(name="test.jpg", size=(100, 100), format="JPEG"):
     image.save(buffer, format=format)
     buffer.seek(0)
     return SimpleUploadedFile(
-        name=name,
-        content=buffer.read(),
-        content_type=f"image/{format.lower()}"
+        name=name, content=buffer.read(), content_type=f"image/{format.lower()}"
     )
 
 
@@ -108,10 +103,7 @@ class TestCompleteProfile:
         Why it matters: This is the primary happy path for profile completion.
         Users must be able to set their username during onboarding.
         """
-        profile = AuthService.complete_profile(
-            user=user,
-            username="validuser123"
-        )
+        profile = AuthService.complete_profile(user=user, username="validuser123")
 
         assert profile.username == "validuser123"
         assert profile.user == user
@@ -123,10 +115,7 @@ class TestCompleteProfile:
         Why it matters: Prevents duplicate usernames that differ only by case
         (e.g., "JohnDoe" and "johndoe" should be the same username).
         """
-        profile = AuthService.complete_profile(
-            user=user,
-            username="MixedCaseUser"
-        )
+        profile = AuthService.complete_profile(user=user, username="MixedCaseUser")
 
         assert profile.username == "mixedcaseuser"
 
@@ -137,10 +126,7 @@ class TestCompleteProfile:
         Why it matters: Prevents accidental whitespace in usernames from
         copy-paste or form submission errors.
         """
-        profile = AuthService.complete_profile(
-            user=user,
-            username="  spaceduser  "
-        )
+        profile = AuthService.complete_profile(user=user, username="  spaceduser  ")
 
         assert profile.username == "spaceduser"
 
@@ -152,9 +138,7 @@ class TestCompleteProfile:
         be optional, not required for profile completion.
         """
         profile = AuthService.complete_profile(
-            user=user,
-            username="testuser",
-            first_name="John"
+            user=user, username="testuser", first_name="John"
         )
 
         assert profile.first_name == "John"
@@ -166,9 +150,7 @@ class TestCompleteProfile:
         Why it matters: Allows users to set their full name for display purposes.
         """
         profile = AuthService.complete_profile(
-            user=user,
-            username="testuser",
-            last_name="Doe"
+            user=user, username="testuser", last_name="Doe"
         )
 
         assert profile.last_name == "Doe"
@@ -181,10 +163,7 @@ class TestCompleteProfile:
         leading or trailing spaces.
         """
         profile = AuthService.complete_profile(
-            user=user,
-            username="testuser",
-            first_name="  John  ",
-            last_name="  Doe  "
+            user=user, username="testuser", first_name="  John  ", last_name="  Doe  "
         )
 
         assert profile.first_name == "John"
@@ -198,10 +177,7 @@ class TestCompleteProfile:
         could cause issues with string operations on the name fields.
         """
         profile = AuthService.complete_profile(
-            user=user,
-            username="testuser",
-            first_name=None,
-            last_name=None
+            user=user, username="testuser", first_name=None, last_name=None
         )
 
         assert profile.first_name == ""
@@ -216,15 +192,15 @@ class TestCompleteProfile:
         """
         image = create_test_image()
         profile = AuthService.complete_profile(
-            user=user,
-            username="testuser",
-            profile_picture=image
+            user=user, username="testuser", profile_picture=image
         )
 
         assert profile.profile_picture is not None
         assert profile.profile_picture.name  # File was saved
 
-    def test_complete_profile_updates_existing_profile(self, db, user_with_complete_profile):
+    def test_complete_profile_updates_existing_profile(
+        self, db, user_with_complete_profile
+    ):
         """
         Can update an existing profile rather than creating a new one.
 
@@ -233,8 +209,7 @@ class TestCompleteProfile:
         """
         original_username = user_with_complete_profile.profile.username
         profile = AuthService.complete_profile(
-            user=user_with_complete_profile,
-            username="newusername"
+            user=user_with_complete_profile, username="newusername"
         )
 
         assert profile.username == "newusername"
@@ -242,7 +217,9 @@ class TestCompleteProfile:
         # Should be same profile object, not a new one
         assert Profile.objects.filter(user=user_with_complete_profile).count() == 1
 
-    def test_complete_profile_raises_validation_error_for_invalid_username(self, db, user):
+    def test_complete_profile_raises_validation_error_for_invalid_username(
+        self, db, user
+    ):
         """
         Raises ValidationError when username format is invalid.
 
@@ -252,10 +229,12 @@ class TestCompleteProfile:
         with pytest.raises(ValidationError):
             AuthService.complete_profile(
                 user=user,
-                username="ab"  # Too short
+                username="ab",  # Too short
             )
 
-    def test_complete_profile_raises_validation_error_for_reserved_username(self, db, user):
+    def test_complete_profile_raises_validation_error_for_reserved_username(
+        self, db, user
+    ):
         """
         Raises ValidationError for reserved usernames like 'admin'.
 
@@ -263,10 +242,7 @@ class TestCompleteProfile:
         confusion. They're blocked at the model validation level.
         """
         with pytest.raises(ValidationError):
-            AuthService.complete_profile(
-                user=user,
-                username="admin"
-            )
+            AuthService.complete_profile(user=user, username="admin")
 
     def test_complete_profile_creates_profile_if_not_exists(self, db):
         """
@@ -277,16 +253,12 @@ class TestCompleteProfile:
         """
         # Create user without profile (bypassing signal)
         user = User.objects.create_user(
-            email="noprofile@example.com",
-            password="TestPass123!"
+            email="noprofile@example.com", password="TestPass123!"
         )
         # Delete auto-created profile
         Profile.objects.filter(user=user).delete()
 
-        profile = AuthService.complete_profile(
-            user=user,
-            username="newuser"
-        )
+        profile = AuthService.complete_profile(user=user, username="newuser")
 
         assert profile.user == user
         assert profile.username == "newuser"
@@ -530,8 +502,7 @@ class TestValidateUsername:
         user.profile.save()
 
         is_valid, message = AuthService.validate_username(
-            "myusername",
-            exclude_user=user
+            "myusername", exclude_user=user
         )
 
         assert is_valid is True
@@ -554,8 +525,7 @@ class TestValidateUsername:
 
         # user2 tries to take user1's username
         is_valid, message = AuthService.validate_username(
-            "user1name",
-            exclude_user=user2
+            "user1name", exclude_user=user2
         )
 
         assert is_valid is False
@@ -586,7 +556,7 @@ class TestCreateLinkedAccount:
         linked = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.EMAIL,
-            provider_user_id=user.email
+            provider_user_id=user.email,
         )
 
         assert linked.user == user
@@ -603,7 +573,7 @@ class TestCreateLinkedAccount:
         linked = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
+            provider_user_id="google-uid-123",
         )
 
         assert linked.user == user
@@ -619,7 +589,7 @@ class TestCreateLinkedAccount:
         linked = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.APPLE,
-            provider_user_id="apple-uid-456"
+            provider_user_id="apple-uid-456",
         )
 
         assert linked.user == user
@@ -637,21 +607,24 @@ class TestCreateLinkedAccount:
         linked1 = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
+            provider_user_id="google-uid-123",
         )
 
         # Second call with same data returns existing
         linked2 = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
+            provider_user_id="google-uid-123",
         )
 
         assert linked1.pk == linked2.pk
-        assert LinkedAccount.objects.filter(
-            provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
-        ).count() == 1
+        assert (
+            LinkedAccount.objects.filter(
+                provider=LinkedAccount.Provider.GOOGLE,
+                provider_user_id="google-uid-123",
+            ).count()
+            == 1
+        )
 
     def test_create_linked_account_allows_multiple_providers_per_user(self, db, user):
         """
@@ -663,12 +636,12 @@ class TestCreateLinkedAccount:
         google = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
+            provider_user_id="google-uid-123",
         )
         apple = AuthService.create_linked_account(
             user=user,
             provider=LinkedAccount.Provider.APPLE,
-            provider_user_id="apple-uid-456"
+            provider_user_id="apple-uid-456",
         )
 
         assert user.linked_accounts.count() == 2
@@ -689,14 +662,14 @@ class TestCreateLinkedAccount:
         linked1 = AuthService.create_linked_account(
             user=user1,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
+            provider_user_id="google-uid-123",
         )
 
         # User2 tries to link same Google account
         linked2 = AuthService.create_linked_account(
             user=user2,
             provider=LinkedAccount.Provider.GOOGLE,
-            provider_user_id="google-uid-123"
+            provider_user_id="google-uid-123",
         )
 
         # Should return the existing link to user1, not create new for user2
@@ -726,8 +699,7 @@ class TestCreateUser:
         signing up with email/password.
         """
         user = AuthService.create_user(
-            email="newuser@example.com",
-            password="SecurePass123!"
+            email="newuser@example.com", password="SecurePass123!"
         )
 
         assert user.email == "newuser@example.com"
@@ -741,8 +713,7 @@ class TestCreateUser:
         different casing. Email addresses are case-insensitive.
         """
         user = AuthService.create_user(
-            email="TEST_LOWERCASE@EXAMPLE.COM",
-            password="SecurePass123!"
+            email="TEST_LOWERCASE@EXAMPLE.COM", password="SecurePass123!"
         )
 
         assert user.email == "test_lowercase@example.com"
@@ -754,8 +725,7 @@ class TestCreateUser:
         Why it matters: Prevents accidental spaces from form input or copy-paste.
         """
         user = AuthService.create_user(
-            email="  spaced@example.com  ",
-            password="SecurePass123!"
+            email="  spaced@example.com  ", password="SecurePass123!"
         )
 
         assert user.email == "spaced@example.com"
@@ -768,8 +738,7 @@ class TestCreateUser:
         with email/password have a LinkedAccount for the email provider.
         """
         user = AuthService.create_user(
-            email="newuser@example.com",
-            password="SecurePass123!"
+            email="newuser@example.com", password="SecurePass123!"
         )
 
         linked = LinkedAccount.objects.get(user=user)
@@ -783,10 +752,7 @@ class TestCreateUser:
         Why it matters: OAuth users don't need a password - they authenticate
         through their provider. Password=None indicates OAuth-only user.
         """
-        user = AuthService.create_user(
-            email="oauth@example.com",
-            password=None
-        )
+        user = AuthService.create_user(email="oauth@example.com", password=None)
 
         assert user.email == "oauth@example.com"
         assert not user.has_usable_password()
@@ -798,15 +764,11 @@ class TestCreateUser:
         Why it matters: OAuth users authenticate through their provider,
         not email. Their LinkedAccount is created separately for that provider.
         """
-        user = AuthService.create_user(
-            email="oauth@example.com",
-            password=None
-        )
+        user = AuthService.create_user(email="oauth@example.com", password=None)
 
         # Should have no linked accounts (OAuth link created separately)
         assert not LinkedAccount.objects.filter(
-            user=user,
-            provider=LinkedAccount.Provider.EMAIL
+            user=user, provider=LinkedAccount.Provider.EMAIL
         ).exists()
 
     def test_create_user_raises_value_error_for_duplicate_email(self, db):
@@ -816,15 +778,11 @@ class TestCreateUser:
         Why it matters: Prevents duplicate accounts. Email is the unique
         identifier for users.
         """
-        AuthService.create_user(
-            email="existing@example.com",
-            password="SecurePass123!"
-        )
+        AuthService.create_user(email="existing@example.com", password="SecurePass123!")
 
         with pytest.raises(ValueError) as exc_info:
             AuthService.create_user(
-                email="existing@example.com",
-                password="DifferentPass123!"
+                email="existing@example.com", password="DifferentPass123!"
             )
 
         assert "already exists" in str(exc_info.value)
@@ -836,15 +794,11 @@ class TestCreateUser:
         Why it matters: "User@Example.com" and "user@example.com" are the
         same email and should not result in two accounts.
         """
-        AuthService.create_user(
-            email="existing@example.com",
-            password="SecurePass123!"
-        )
+        AuthService.create_user(email="existing@example.com", password="SecurePass123!")
 
         with pytest.raises(ValueError):
             AuthService.create_user(
-                email="EXISTING@EXAMPLE.COM",
-                password="DifferentPass123!"
+                email="EXISTING@EXAMPLE.COM", password="DifferentPass123!"
             )
 
     def test_create_user_accepts_additional_kwargs(self, db):
@@ -855,9 +809,7 @@ class TestCreateUser:
         for special user types.
         """
         user = AuthService.create_user(
-            email="staff@example.com",
-            password="SecurePass123!",
-            is_staff=True
+            email="staff@example.com", password="SecurePass123!", is_staff=True
         )
 
         assert user.is_staff is True
@@ -898,7 +850,7 @@ class TestVerifyEmail:
             user=unverified_user,
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
             expires_at=timezone.now() + timedelta(hours=24),
-            used_at=None
+            used_at=None,
         )
 
         AuthService.verify_email(token.token)
@@ -917,7 +869,9 @@ class TestVerifyEmail:
         valid_verification_token.refresh_from_db()
         assert valid_verification_token.used_at is not None
 
-    def test_verify_email_fails_with_expired_token(self, db, expired_verification_token):
+    def test_verify_email_fails_with_expired_token(
+        self, db, expired_verification_token
+    ):
         """
         Rejects expired verification tokens.
 
@@ -951,7 +905,9 @@ class TestVerifyEmail:
         assert success is False
         assert "Invalid or expired" in message
 
-    def test_verify_email_fails_with_password_reset_token_type(self, db, password_reset_token):
+    def test_verify_email_fails_with_password_reset_token_type(
+        self, db, password_reset_token
+    ):
         """
         Rejects password reset tokens used for email verification.
 
@@ -976,7 +932,7 @@ class TestVerifyEmail:
             user=user,
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
             expires_at=timezone.now(),
-            used_at=None
+            used_at=None,
         )
 
         success, message = AuthService.verify_email(token.token)
@@ -1014,15 +970,13 @@ class TestRequestPasswordReset:
         Why it matters: The token is needed for the reset_password step.
         """
         initial_count = EmailVerificationToken.objects.filter(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
+            user=user, token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
         ).count()
 
         AuthService.request_password_reset(user.email)
 
         final_count = EmailVerificationToken.objects.filter(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
+            user=user, token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
         ).count()
 
         assert final_count == initial_count + 1
@@ -1038,8 +992,7 @@ class TestRequestPasswordReset:
         after = timezone.now()
 
         token = EmailVerificationToken.objects.filter(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
+            user=user, token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
         ).latest("created_at")
 
         # Expiry should be ~1 hour from creation
@@ -1058,7 +1011,9 @@ class TestRequestPasswordReset:
 
         assert result is True
 
-    def test_request_password_reset_does_not_create_token_for_nonexistent_email(self, db):
+    def test_request_password_reset_does_not_create_token_for_nonexistent_email(
+        self, db
+    ):
         """
         No token is created for non-existent email.
 
@@ -1083,8 +1038,7 @@ class TestRequestPasswordReset:
         assert result is True
         # Verify token was actually created
         assert EmailVerificationToken.objects.filter(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
+            user=user, token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
         ).exists()
 
     def test_request_password_reset_allows_multiple_requests(self, db, user):
@@ -1099,8 +1053,7 @@ class TestRequestPasswordReset:
         AuthService.request_password_reset(user.email)
 
         token_count = EmailVerificationToken.objects.filter(
-            user=user,
-            token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
+            user=user, token_type=EmailVerificationToken.TokenType.PASSWORD_RESET
         ).count()
 
         assert token_count == 3
@@ -1126,8 +1079,7 @@ class TestResetPassword:
         Why it matters: Happy path for password reset flow.
         """
         success, message = AuthService.reset_password(
-            token=password_reset_token.token,
-            new_password="NewSecurePass123!"
+            token=password_reset_token.token, new_password="NewSecurePass123!"
         )
 
         assert success is True
@@ -1143,8 +1095,7 @@ class TestResetPassword:
         old_password_hash = user.password
 
         AuthService.reset_password(
-            token=password_reset_token.token,
-            new_password="NewSecurePass123!"
+            token=password_reset_token.token, new_password="NewSecurePass123!"
         )
 
         user.refresh_from_db()
@@ -1158,8 +1109,7 @@ class TestResetPassword:
         Why it matters: Prevents token reuse - one reset per token.
         """
         AuthService.reset_password(
-            token=password_reset_token.token,
-            new_password="NewSecurePass123!"
+            token=password_reset_token.token, new_password="NewSecurePass123!"
         )
 
         password_reset_token.refresh_from_db()
@@ -1177,26 +1127,23 @@ class TestResetPassword:
             user=user,
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
             expires_at=timezone.now() + timedelta(hours=1),
-            used_at=None
+            used_at=None,
         )
         token2 = EmailVerificationTokenFactory(
             user=user,
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
             expires_at=timezone.now() + timedelta(hours=1),
-            used_at=None
+            used_at=None,
         )
         token3 = EmailVerificationTokenFactory(
             user=user,
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
             expires_at=timezone.now() + timedelta(hours=1),
-            used_at=None
+            used_at=None,
         )
 
         # Use token2 to reset password
-        AuthService.reset_password(
-            token=token2.token,
-            new_password="NewSecurePass123!"
-        )
+        AuthService.reset_password(token=token2.token, new_password="NewSecurePass123!")
 
         # All tokens should now be marked as used
         token1.refresh_from_db()
@@ -1207,15 +1154,16 @@ class TestResetPassword:
         assert token2.used_at is not None
         assert token3.used_at is not None
 
-    def test_reset_password_fails_with_expired_token(self, db, expired_password_reset_token):
+    def test_reset_password_fails_with_expired_token(
+        self, db, expired_password_reset_token
+    ):
         """
         Rejects expired password reset tokens.
 
         Why it matters: Expired tokens should not allow password changes.
         """
         success, message = AuthService.reset_password(
-            token=expired_password_reset_token.token,
-            new_password="NewSecurePass123!"
+            token=expired_password_reset_token.token, new_password="NewSecurePass123!"
         )
 
         assert success is False
@@ -1231,12 +1179,11 @@ class TestResetPassword:
             user=user,
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
             expires_at=timezone.now() + timedelta(hours=1),
-            used_at=timezone.now() - timedelta(minutes=30)
+            used_at=timezone.now() - timedelta(minutes=30),
         )
 
         success, message = AuthService.reset_password(
-            token=used_token.token,
-            new_password="NewSecurePass123!"
+            token=used_token.token, new_password="NewSecurePass123!"
         )
 
         assert success is False
@@ -1249,22 +1196,22 @@ class TestResetPassword:
         Why it matters: Random/guessed tokens should not work.
         """
         success, message = AuthService.reset_password(
-            token="nonexistent-token-12345",
-            new_password="NewSecurePass123!"
+            token="nonexistent-token-12345", new_password="NewSecurePass123!"
         )
 
         assert success is False
         assert "Invalid or expired" in message
 
-    def test_reset_password_fails_with_verification_token_type(self, db, valid_verification_token):
+    def test_reset_password_fails_with_verification_token_type(
+        self, db, valid_verification_token
+    ):
         """
         Rejects email verification tokens used for password reset.
 
         Why it matters: Token types must match their intended purpose.
         """
         success, message = AuthService.reset_password(
-            token=valid_verification_token.token,
-            new_password="NewSecurePass123!"
+            token=valid_verification_token.token, new_password="NewSecurePass123!"
         )
 
         assert success is False
@@ -1282,7 +1229,7 @@ class TestResetPassword:
             user=user,
             token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
             expires_at=timezone.now() + timedelta(hours=24),
-            used_at=None
+            used_at=None,
         )
 
         # Create and use a password reset token
@@ -1290,12 +1237,11 @@ class TestResetPassword:
             user=user,
             token_type=EmailVerificationToken.TokenType.PASSWORD_RESET,
             expires_at=timezone.now() + timedelta(hours=1),
-            used_at=None
+            used_at=None,
         )
 
         AuthService.reset_password(
-            token=reset_token.token,
-            new_password="NewSecurePass123!"
+            token=reset_token.token, new_password="NewSecurePass123!"
         )
 
         # Verification token should still be unused
@@ -1418,19 +1364,21 @@ class TestSendVerificationEmail:
         """
         initial_count = EmailVerificationToken.objects.filter(
             user=unverified_user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         ).count()
 
         AuthService.send_verification_email(unverified_user)
 
         final_count = EmailVerificationToken.objects.filter(
             user=unverified_user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         ).count()
 
         assert final_count == initial_count + 1
 
-    def test_send_verification_email_token_has_correct_expiry(self, db, unverified_user):
+    def test_send_verification_email_token_has_correct_expiry(
+        self, db, unverified_user
+    ):
         """
         Created token expires in 24 hours (EMAIL_VERIFICATION_EXPIRY_HOURS).
 
@@ -1443,7 +1391,7 @@ class TestSendVerificationEmail:
 
         token = EmailVerificationToken.objects.filter(
             user=unverified_user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         ).latest("created_at")
 
         # Expiry should be ~24 hours from creation
@@ -1451,7 +1399,9 @@ class TestSendVerificationEmail:
         expected_max = after + timedelta(hours=24)
         assert expected_min <= token.expires_at <= expected_max
 
-    def test_send_verification_email_token_type_is_email_verification(self, db, unverified_user):
+    def test_send_verification_email_token_type_is_email_verification(
+        self, db, unverified_user
+    ):
         """
         Created token has EMAIL_VERIFICATION type.
 
@@ -1459,9 +1409,9 @@ class TestSendVerificationEmail:
         """
         AuthService.send_verification_email(unverified_user)
 
-        token = EmailVerificationToken.objects.filter(
-            user=unverified_user
-        ).latest("created_at")
+        token = EmailVerificationToken.objects.filter(user=unverified_user).latest(
+            "created_at"
+        )
 
         assert token.token_type == EmailVerificationToken.TokenType.EMAIL_VERIFICATION
 
@@ -1475,7 +1425,7 @@ class TestSendVerificationEmail:
 
         token = EmailVerificationToken.objects.filter(
             user=unverified_user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         ).latest("created_at")
 
         assert token.used_at is None
@@ -1492,7 +1442,7 @@ class TestSendVerificationEmail:
 
         tokens = EmailVerificationToken.objects.filter(
             user=unverified_user,
-            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION
+            token_type=EmailVerificationToken.TokenType.EMAIL_VERIFICATION,
         ).values_list("token", flat=True)
 
         # All tokens should be unique
@@ -1534,8 +1484,7 @@ class TestGetOrCreateProfile:
         """
         # Create user and delete the auto-created profile
         user = User.objects.create_user(
-            email="noprofile@example.com",
-            password="TestPass123!"
+            email="noprofile@example.com", password="TestPass123!"
         )
         Profile.objects.filter(user=user).delete()
 
@@ -1563,8 +1512,7 @@ class TestGetOrCreateProfile:
         Why it matters: New profiles should not have unexpected default values.
         """
         user = User.objects.create_user(
-            email="noprofile@example.com",
-            password="TestPass123!"
+            email="noprofile@example.com", password="TestPass123!"
         )
         Profile.objects.filter(user=user).delete()
 
@@ -1636,10 +1584,7 @@ class TestUpdateProfile:
         Why it matters: Efficient updates without multiple database writes.
         """
         profile = AuthService.update_profile(
-            user,
-            first_name="John",
-            last_name="Doe",
-            timezone="Europe/London"
+            user, first_name="John", last_name="Doe", timezone="Europe/London"
         )
 
         assert profile.first_name == "John"
@@ -1655,9 +1600,7 @@ class TestUpdateProfile:
         """
         # Should not raise
         profile = AuthService.update_profile(
-            user,
-            nonexistent_field="value",
-            first_name="Valid"
+            user, nonexistent_field="value", first_name="Valid"
         )
 
         assert profile.first_name == "Valid"
@@ -1671,8 +1614,7 @@ class TestUpdateProfile:
         profile signal didn't fire.
         """
         user = User.objects.create_user(
-            email="noprofile@example.com",
-            password="TestPass123!"
+            email="noprofile@example.com", password="TestPass123!"
         )
         Profile.objects.filter(user=user).delete()
 
