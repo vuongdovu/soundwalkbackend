@@ -90,6 +90,8 @@ INSTALLED_APPS = [
     "core",
     "authentication",
     "toolkit",
+    "chat",
+    "notifications",
 ]
 
 MIDDLEWARE = [

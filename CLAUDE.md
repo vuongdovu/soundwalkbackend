@@ -22,17 +22,17 @@ docker-compose logs -f web
 
 ### Running Tests
 ```bash
-# Run all tests (from container)
+# Run all tests (from container) - coverage enabled by default
 docker-compose exec web pytest
 
 # Run specific test file
-docker-compose exec web pytest app/authentication/tests/test_views.py
+docker-compose exec web pytest authentication/tests/test_views.py
 
 # Run specific test class or method
-docker-compose exec web pytest app/authentication/tests/test_views.py::TestLogin::test_login_success
+docker-compose exec web pytest authentication/tests/test_views.py::TestLogin::test_login_success
 
-# Run with coverage
-docker-compose exec web pytest --cov=app --cov-report=html
+# Run with HTML coverage report
+docker-compose exec web pytest --cov-report=html
 
 # Run tests by marker
 docker-compose exec web pytest -m "not slow"

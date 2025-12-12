@@ -52,6 +52,9 @@ celerybeat-schedule.*.*
 htmlcov/
 .pytest_cache/
 
+# Media uploads (test artifacts)
+app/media/
+
 # Linting and type checking caches
 .ruff_cache/
 .mypy_cache/
