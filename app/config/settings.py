@@ -92,6 +92,7 @@ INSTALLED_APPS = [
     "toolkit",
     "chat",
     "notifications",
+    "payments",
 ]
 
 MIDDLEWARE = [
