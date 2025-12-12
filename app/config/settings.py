@@ -89,10 +89,6 @@ INSTALLED_APPS = [
     # Local apps
     "core",
     "authentication",
-    "payments",
-    "notifications",
-    "chat",
-    "ai",
     "toolkit",
 ]
 
@@ -503,28 +499,3 @@ CHANNEL_LAYERS = {
         },
     },
 }
-
-# =============================================================================
-# Stripe Configuration
-# =============================================================================
-STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
-STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
-STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
-
-# =============================================================================
-# AI Provider Configuration
-# =============================================================================
-OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
-ANTHROPIC_API_KEY = env("ANTHROPIC_API_KEY", default="")
-AI_CACHE_TTL = env.int("AI_CACHE_TTL", default=3600)  # 1 hour
-AI_DEFAULT_PROVIDER = env("AI_DEFAULT_PROVIDER", default="openai")
-AI_DEFAULT_MODEL = env("AI_DEFAULT_MODEL", default="gpt-4")
-
-# =============================================================================
-# Push Notification Configuration
-# =============================================================================
-FCM_SERVER_KEY = env("FCM_SERVER_KEY", default="")
-APNS_KEY_ID = env("APNS_KEY_ID", default="")
-APNS_TEAM_ID = env("APNS_TEAM_ID", default="")
-APNS_BUNDLE_ID = env("APNS_BUNDLE_ID", default="")
-APNS_KEY_PATH = env("APNS_KEY_PATH", default="")

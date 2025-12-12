@@ -22,10 +22,6 @@ URL Structure:
         deactivate/                - Account deactivation (custom)
         google/                    - Google OAuth2 login (custom)
         apple/                     - Apple Sign-In login (custom)
-    /api/v1/payments/              - Payment and subscription endpoints
-    /api/v1/notifications/         - Notification endpoints
-    /api/v1/chat/                  - Chat and messaging endpoints
-    /api/v1/ai/                    - AI completion endpoints
 
 For more information, see:
 https://docs.djangoproject.com/en/5.2/topics/http/urls/
@@ -49,11 +45,6 @@ api_v1_patterns = [
     path("auth/", include("authentication.urls")),
     # Registration
     path("auth/registration/", include("dj_rest_auth.registration.urls")),
-    # Application APIs
-    path("payments/", include("payments.urls")),
-    path("notifications/", include("notifications.urls")),
-    path("chat/", include("chat.urls")),
-    path("ai/", include("ai.urls")),
 ]
 
 urlpatterns = [
