@@ -37,6 +37,7 @@ env = environ.Env(
     DEBUG=(bool, False),  # Default to False for safety
     ALLOWED_HOSTS=(list, []),
     CORS_ALLOWED_ORIGINS=(list, []),
+    CSRF_TRUSTED_ORIGINS=(list, []),
     LOG_LEVEL=(str, "INFO"),
 )
 
@@ -200,6 +201,8 @@ AUTH_PASSWORD_VALIDATORS = [
 # =============================================================================
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
+        # Store JWT in cookies (for web clients)
+        "dj_rest_auth.jwt_auth.JWTCookieAuthentication",
         # JWT authentication (primary for API clients)
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         # Session authentication (for browsable API and admin)
@@ -265,7 +268,7 @@ SPECTACULAR_SETTINGS = {
 # Simple JWT Configuration
 # =============================================================================
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=5),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -283,10 +286,20 @@ SIMPLE_JWT = {
 # =============================================================================
 REST_AUTH = {
     "USE_JWT": True,
-    "JWT_AUTH_COOKIE": None,  # Don't use cookies for JWT
-    "JWT_AUTH_HTTPONLY": False,
+
+    "JWT_AUTH_COOKIE": "access",
+    "JWT_AUTH_REFRESH_COOKIE": "refresh",
+    "JWT_AUTH_HTTPONLY": True,
+
+    "JWT_AUTH_SECURE": True,          # https only
+    "JWT_AUTH_SAMESITE": "Lax", 
+
+    "JWT_AUTH_COOKIE_USE_CSRF": True, # CSRF protection not needed for JWT (Change this to true if you are using CSRF protection))
+
     "USER_DETAILS_SERIALIZER": "authentication.serializers.UserSerializer",
     "REGISTER_SERIALIZER": "authentication.serializers.RegisterSerializer",
+    "LOGIN_SERIALIZER": "authentication.serializers.UsernameLoginSerializer",
+    "JWT_SERIALIZER": "authentication.serializers.CookieOnlyJWTSerializer",
 }
 
 # =============================================================================
@@ -334,6 +347,7 @@ SOCIALACCOUNT_PROVIDERS = {
 # =============================================================================
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
 CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = env("CSRF_TRUSTED_ORIGINS")
 
 # =============================================================================
 # Celery Configuration

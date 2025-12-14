@@ -475,3 +475,5 @@ def chain(*args, **kwargs):
 [2025-12-11 22:37:13] DEBUG faker.factory factory:78 - Looking for locale `en_US` in provider `faker.providers.ssn`.
 [2025-12-11 22:37:13] DEBUG faker.factory factory:97 - Provider `faker.providers.ssn` has been localized to `en_US`.
 [2025-12-11 22:37:13] DEBUG faker.factory factory:108 - Provider `faker.providers.user_agent` does not feature localization. Specified locale `en_US` is not used for this provider.
+[2025-12-11 22:58:10] DEBUG django.db.backends utils:151 - (0.000) SELECT 1; args=None; alias=default
+[2025-12-11 22:58:40] DEBUG django.db.backends utils:151 - (0.000) SELECT 1; args=None; alias=default

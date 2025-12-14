@@ -22,11 +22,19 @@ Security:
 
 import re
 
+from dj_rest_auth.serializers import JWTSerializer
+from django.contrib.auth import authenticate
 from django.core.validators import FileExtensionValidator
 from rest_framework import serializers
 
 from authentication.models import User, Profile, LinkedAccount, RESERVED_USERNAMES
 
+class CookieOnlyJWTSerializer(JWTSerializer):
+    def get_fields(self):
+        fields = super().get_fields()
+        fields.pop("access", None)
+        fields.pop("refresh", None)
+        return fields
 
 class UserSerializer(serializers.ModelSerializer):
     """
@@ -309,6 +317,57 @@ class RegisterSerializer(serializers.Serializer):
         )
 
         return user
+
+
+class UsernameLoginSerializer(serializers.Serializer):
+    """
+    Serializer for login using email only.
+
+    Payload shape is now strictly:
+        {
+            "email": "...",
+            "password": "..."
+        }
+    """
+
+    email = serializers.EmailField(
+        required=True,
+        allow_blank=False,
+        help_text="Email used to sign in.",
+    )
+    password = serializers.CharField(
+        write_only=True,
+        style={"input_type": "password"},
+        help_text="Account password.",
+    )
+
+    default_error_messages = {
+        "invalid_credentials": "Unable to log in with the provided credentials."
+    }
+
+    def validate(self, attrs):
+        """Authenticate user by email plus password."""
+        email = attrs.get("email", "").strip().lower()
+        password = attrs.get("password")
+
+        if not email or not password:
+            raise serializers.ValidationError(
+                {"detail": "Must include 'email' and 'password'."}
+            )
+
+        user = authenticate(
+            request=self.context.get("request"),
+            email=email,  # USERNAME_FIELD on User is email
+            password=password,
+        )
+        if not user:
+            raise serializers.ValidationError(
+                {"detail": self.error_messages["invalid_credentials"]},
+                code="authorization",
+            )
+
+        attrs["user"] = user
+        return attrs
 
 
 # -----------------------------------------------------------------------------

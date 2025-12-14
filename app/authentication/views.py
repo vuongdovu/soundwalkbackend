@@ -64,8 +64,78 @@ from authentication.serializers import (
     BiometricStatusSerializer,
     BiometricDisableResponseSerializer,
 )
-from authentication.services import AuthService, BiometricService
+from authentication.services.auth_service import AuthService
+from authentication.services.biometric_service import BiometricService
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework.permissions import AllowAny
 
+# =============================================================================
+# Refresh JWT Views
+# =============================================================================
+
+def _seconds(td):
+    return int(td.total_seconds())
+
+def _cookie_base_kwargs():
+    rest_auth = getattr(settings, "REST_AUTH", {})
+    return {
+        "httponly": rest_auth.get("JWT_AUTH_HTTPONLY", True),
+        "secure": rest_auth.get("JWT_AUTH_SECURE", not settings.DEBUG),
+        "samesite": rest_auth.get("JWT_AUTH_SAMESITE", "Lax"),
+    }
+
+class CookieTokenRefreshView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []  # important: don't require auth to refresh
+
+    def post(self, request):
+        rest_auth = getattr(settings, "REST_AUTH", {})
+        access_cookie_name = rest_auth.get("JWT_AUTH_COOKIE", "access")
+        refresh_cookie_name = rest_auth.get("JWT_AUTH_REFRESH_COOKIE", "refresh")
+
+        refresh_token = request.COOKIES.get(refresh_cookie_name)
+        if not refresh_token:
+            return Response({"detail": "No refresh cookie"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            serializer = TokenRefreshSerializer(data={"refresh": refresh_token})
+            serializer.is_valid(raise_exception=True)
+        except TokenError:
+            # Refresh is invalid/expired -> treat as logged out
+            resp = Response({"detail": "Refresh expired"}, status=status.HTTP_401_UNAUTHORIZED)
+            resp.delete_cookie(access_cookie_name, path="/")
+            resp.delete_cookie(refresh_cookie_name, path="/api/v1/auth/token/refresh/")
+            return resp
+
+        data = serializer.validated_data  # contains "access", and maybe "refresh" if rotation is on
+
+        access_lifetime = settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"]
+        refresh_lifetime = settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"]
+
+        resp = Response(status=status.HTTP_204_NO_CONTENT)
+
+        # Set fresh access cookie
+        resp.set_cookie(
+            access_cookie_name,
+            data["access"],
+            max_age=_seconds(access_lifetime),
+            path="/",
+            **_cookie_base_kwargs(),
+        )
+
+        # If ROTATE_REFRESH_TOKENS=True, SimpleJWT may include a new refresh token
+        if "refresh" in data:
+            resp.set_cookie(
+                refresh_cookie_name,
+                data["refresh"],
+                max_age=_seconds(refresh_lifetime),
+                # Keep refresh cookie scoped to refresh endpoint if you want
+                path="/api/v1/auth/token/refresh/",
+                **_cookie_base_kwargs(),
+            )
+
+        return resp
 
 # =============================================================================
 # Social Authentication Views
