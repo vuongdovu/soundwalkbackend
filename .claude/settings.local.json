@@ -161,7 +161,13 @@
       "Bash(docker ps:*)",
       "Read(//home/wilson/**)",
       "Bash(echo:*)",
-      "Bash(do echo \"=== $dir ===\" find /home/wilson/Projects/sk-b/app/$dir -name \"*.py\" -type f)"
+      "Bash(do echo \"=== $dir ===\" find /home/wilson/Projects/sk-b/app/$dir -name \"*.py\" -type f)",
+      "WebFetch(domain:channels.readthedocs.io)",
+      "Bash(npx:*)",
+      "Bash(claude mcp add:*)",
+      "Bash(claude mcp:*)",
+      "WebFetch(domain:docs.viewflow.io)",
+      "Bash(pip3 index:*)"
     ],
     "deny": []
   }

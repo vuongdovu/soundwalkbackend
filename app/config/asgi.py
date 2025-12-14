@@ -35,7 +35,7 @@ django_asgi_app = get_asgi_application()
 from channels.routing import ProtocolTypeRouter, URLRouter  # noqa: E402
 from channels.security.websocket import AllowedHostsOriginValidator  # noqa: E402
 
-from chat.middleware import JWTAuthMiddleware  # noqa: E402
+from django_channels_jwt_auth_middleware.auth import JWTAuthMiddlewareStack  # noqa: E402
 from chat.routing import websocket_urlpatterns  # noqa: E402
 
 # ASGI application that routes HTTP and WebSocket protocols
@@ -45,10 +45,10 @@ application = ProtocolTypeRouter(
         "http": django_asgi_app,
         # WebSocket connections are routed through:
         # 1. AllowedHostsOriginValidator - ensures origin matches ALLOWED_HOSTS
-        # 2. JWTAuthMiddleware - authenticates user via JWT token
+        # 2. JWTAuthMiddlewareStack - authenticates user via JWT token
         # 3. URLRouter - routes to appropriate consumer based on path
         "websocket": AllowedHostsOriginValidator(
-            JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+            JWTAuthMiddlewareStack(URLRouter(websocket_urlpatterns))
         ),
     }
 )
