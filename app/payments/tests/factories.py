@@ -39,10 +39,7 @@ from payments.models import (
 )
 from payments.state_machines import (
     OnboardingStatus,
-    PaymentOrderState,
     PaymentStrategyType,
-    PayoutState,
-    RefundState,
     WebhookEventStatus,
 )
 
@@ -100,7 +97,9 @@ class ConnectedAccountFactory(factory.django.DjangoModelFactory):
         skip_postgeneration_save = True
 
     profile = factory.SubFactory(ProfileFactory)
-    stripe_account_id = factory.Sequence(lambda n: f"acct_test_{n}_{uuid.uuid4().hex[:8]}")
+    stripe_account_id = factory.Sequence(
+        lambda n: f"acct_test_{n}_{uuid.uuid4().hex[:8]}"
+    )
     onboarding_status = OnboardingStatus.COMPLETE
     payouts_enabled = True
     charges_enabled = True

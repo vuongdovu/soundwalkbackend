@@ -348,6 +348,31 @@ CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 
 # =============================================================================
+# Stripe Configuration
+# =============================================================================
+# Get your API keys from: https://dashboard.stripe.com/apikeys
+# Use test keys (sk_test_...) for development, live keys (sk_live_...) for production
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default="")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default="")
+
+# Webhook signing secret from: https://dashboard.stripe.com/webhooks
+# Each webhook endpoint has its own signing secret
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
+
+# API timeout in seconds (default: 10)
+# Keep low for responsive error handling; increase if experiencing timeouts
+STRIPE_API_TIMEOUT_SECONDS = env.int("STRIPE_API_TIMEOUT_SECONDS", default=10)
+
+# Maximum retry attempts for transient failures (default: 3)
+STRIPE_MAX_RETRIES = env.int("STRIPE_MAX_RETRIES", default=3)
+
+# =============================================================================
+# Platform Configuration
+# =============================================================================
+# Platform fee percentage taken from each payment (default: 15%)
+PLATFORM_FEE_PERCENT = env.int("PLATFORM_FEE_PERCENT", default=15)
+
+# =============================================================================
 # Internationalization
 # =============================================================================
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

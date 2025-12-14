@@ -32,6 +32,8 @@ URL Structure:
         conversations/{id}/participants/{pk}/ - Participant update/remove
         conversations/{id}/messages/ - Message list/send
         conversations/{id}/messages/{pk}/ - Message delete
+    /api/v1/payments/              - Payment endpoints
+        webhooks/stripe/           - Stripe webhook endpoint (POST)
 
 For more information, see:
 https://docs.djangoproject.com/en/5.2/topics/http/urls/
@@ -59,6 +61,8 @@ api_v1_patterns = [
     path("chat/", include("chat.urls")),
     # Notifications
     path("notifications/", include("notifications.urls")),
+    # Payments
+    path("payments/", include("payments.urls")),
 ]
 
 urlpatterns = [

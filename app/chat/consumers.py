@@ -29,7 +29,6 @@ Message Types (to client):
 
 from __future__ import annotations
 
-import json
 import logging
 from uuid import UUID
 
@@ -113,9 +112,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         )
 
         await self.accept()
-        logger.info(
-            f"User {user.id} connected to conversation {self.conversation_id}"
-        )
+        logger.info(f"User {user.id} connected to conversation {self.conversation_id}")
 
     async def disconnect(self, close_code):
         """
@@ -129,7 +126,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 self.channel_name,
             )
             user = self.scope.get("user")
-            user_id = user.id if user and not isinstance(user, AnonymousUser) else "anonymous"
+            user_id = (
+                user.id if user and not isinstance(user, AnonymousUser) else "anonymous"
+            )
             logger.info(
                 f"User {user_id} disconnected from conversation {self.conversation_id}"
             )
@@ -154,10 +153,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         elif message_type == "typing":
             await self._handle_typing(user, content)
         else:
-            await self.send_json({
-                "type": "error",
-                "message": f"Unknown message type: {message_type}",
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": f"Unknown message type: {message_type}",
+                }
+            )
 
     async def _handle_message(self, user, content):
         """
@@ -169,10 +170,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         parent_id = content.get("parent_id")
 
         if not message_content:
-            await self.send_json({
-                "type": "error",
-                "message": "Message content cannot be empty",
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": "Message content cannot be empty",
+                }
+            )
             return
 
         result = await self._send_message(
@@ -182,10 +185,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         )
 
         if not result["success"]:
-            await self.send_json({
-                "type": "error",
-                "message": result["error"],
-            })
+            await self.send_json(
+                {
+                    "type": "error",
+                    "message": result["error"],
+                }
+            )
             return
 
         message_data = result["data"]
@@ -220,10 +225,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
         Sends the message to the WebSocket client.
         """
-        await self.send_json({
-            "type": "message",
-            "message": event["message"],
-        })
+        await self.send_json(
+            {
+                "type": "message",
+                "message": event["message"],
+            }
+        )
 
     async def chat_typing(self, event):
         """
@@ -235,11 +242,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         if user and user.id == event["user_id"]:
             return
 
-        await self.send_json({
-            "type": "typing",
-            "user_id": event["user_id"],
-            "is_typing": event["is_typing"],
-        })
+        await self.send_json(
+            {
+                "type": "typing",
+                "user_id": event["user_id"],
+                "is_typing": event["is_typing"],
+            }
+        )
 
     @database_sync_to_async
     def _get_conversation(self) -> Conversation | None:

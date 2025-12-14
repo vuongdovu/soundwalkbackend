@@ -8,210 +8,869 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('authentication', '0002_add_bio_public_key_to_profile'),
-        ('payments', '0001_initial'),
+        ("authentication", "0002_add_bio_public_key_to_profile"),
+        ("payments", "0001_initial"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='ConnectedAccount',
+            name="ConnectedAccount",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, help_text='Unique identifier for this record', primary_key=True, serialize=False)),
-                ('stripe_account_id', models.CharField(db_index=True, help_text='Stripe Account ID (acct_xxx)', max_length=255, unique=True)),
-                ('onboarding_status', models.CharField(choices=[('not_started', 'Not Started'), ('in_progress', 'In Progress'), ('complete', 'Complete'), ('rejected', 'Rejected')], db_index=True, default='not_started', help_text='Current Stripe Connect onboarding status', max_length=20)),
-                ('payouts_enabled', models.BooleanField(default=False, help_text='Whether Stripe has enabled payouts for this account')),
-                ('charges_enabled', models.BooleanField(default=False, help_text='Whether Stripe has enabled charges for this account')),
-                ('version', models.PositiveIntegerField(default=1, help_text='Version for optimistic locking - incremented on each save')),
-                ('metadata', models.JSONField(blank=True, default=dict, help_text='Arbitrary JSON metadata (e.g., business type, country)')),
-                ('profile', models.OneToOneField(help_text='Profile this connected account belongs to', on_delete=django.db.models.deletion.PROTECT, related_name='connected_account', to='authentication.profile')),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        help_text="Unique identifier for this record",
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "stripe_account_id",
+                    models.CharField(
+                        db_index=True,
+                        help_text="Stripe Account ID (acct_xxx)",
+                        max_length=255,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "onboarding_status",
+                    models.CharField(
+                        choices=[
+                            ("not_started", "Not Started"),
+                            ("in_progress", "In Progress"),
+                            ("complete", "Complete"),
+                            ("rejected", "Rejected"),
+                        ],
+                        db_index=True,
+                        default="not_started",
+                        help_text="Current Stripe Connect onboarding status",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "payouts_enabled",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Whether Stripe has enabled payouts for this account",
+                    ),
+                ),
+                (
+                    "charges_enabled",
+                    models.BooleanField(
+                        default=False,
+                        help_text="Whether Stripe has enabled charges for this account",
+                    ),
+                ),
+                (
+                    "version",
+                    models.PositiveIntegerField(
+                        default=1,
+                        help_text="Version for optimistic locking - incremented on each save",
+                    ),
+                ),
+                (
+                    "metadata",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="Arbitrary JSON metadata (e.g., business type, country)",
+                    ),
+                ),
+                (
+                    "profile",
+                    models.OneToOneField(
+                        help_text="Profile this connected account belongs to",
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="connected_account",
+                        to="authentication.profile",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Connected Account',
-                'verbose_name_plural': 'Connected Accounts',
-                'ordering': ['-created_at'],
+                "verbose_name": "Connected Account",
+                "verbose_name_plural": "Connected Accounts",
+                "ordering": ["-created_at"],
             },
         ),
         migrations.CreateModel(
-            name='PaymentOrder',
+            name="PaymentOrder",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, help_text='Unique identifier for this record', primary_key=True, serialize=False)),
-                ('amount_cents', models.PositiveBigIntegerField(help_text='Payment amount in smallest currency unit (e.g., cents)')),
-                ('currency', models.CharField(default='usd', help_text='ISO 4217 currency code (lowercase)', max_length=3)),
-                ('strategy_type', models.CharField(choices=[('direct', 'Direct Payment'), ('escrow', 'Escrow Payment'), ('subscription', 'Subscription')], default='direct', help_text='Payment processing strategy (direct, escrow, subscription)', max_length=20)),
-                ('state', django_fsm.FSMField(choices=[('draft', 'Draft'), ('pending', 'Pending'), ('processing', 'Processing'), ('captured', 'Captured'), ('held', 'Held'), ('released', 'Released'), ('settled', 'Settled'), ('failed', 'Failed'), ('cancelled', 'Cancelled'), ('refunded', 'Refunded'), ('partially_refunded', 'Partially Refunded')], db_index=True, default='draft', help_text='Current state of the payment order (managed by FSM)', max_length=50, protected=True)),
-                ('reference_id', models.UUIDField(blank=True, help_text='UUID of related business entity (e.g., booking ID)', null=True)),
-                ('reference_type', models.CharField(blank=True, help_text="Type of related entity (e.g., 'booking', 'session')", max_length=50, null=True)),
-                ('stripe_payment_intent_id', models.CharField(blank=True, db_index=True, help_text='Stripe PaymentIntent ID (pi_xxx)', max_length=255, null=True, unique=True)),
-                ('version', models.PositiveIntegerField(default=1, help_text='Version for optimistic locking - incremented on each save')),
-                ('captured_at', models.DateTimeField(blank=True, help_text='When payment was captured from customer', null=True)),
-                ('held_at', models.DateTimeField(blank=True, help_text='When funds were placed in escrow hold', null=True)),
-                ('released_at', models.DateTimeField(blank=True, help_text='When funds were released from escrow', null=True)),
-                ('settled_at', models.DateTimeField(blank=True, help_text='When payment was fully settled', null=True)),
-                ('failed_at', models.DateTimeField(blank=True, help_text='When payment failed', null=True)),
-                ('cancelled_at', models.DateTimeField(blank=True, help_text='When payment was cancelled', null=True)),
-                ('metadata', models.JSONField(blank=True, default=dict, help_text='Arbitrary JSON metadata for extensibility')),
-                ('failure_reason', models.TextField(blank=True, help_text='Detailed reason if payment failed', null=True)),
-                ('payer', models.ForeignKey(help_text='User making the payment', on_delete=django.db.models.deletion.PROTECT, related_name='payment_orders', to=settings.AUTH_USER_MODEL)),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        help_text="Unique identifier for this record",
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "amount_cents",
+                    models.PositiveBigIntegerField(
+                        help_text="Payment amount in smallest currency unit (e.g., cents)"
+                    ),
+                ),
+                (
+                    "currency",
+                    models.CharField(
+                        default="usd",
+                        help_text="ISO 4217 currency code (lowercase)",
+                        max_length=3,
+                    ),
+                ),
+                (
+                    "strategy_type",
+                    models.CharField(
+                        choices=[
+                            ("direct", "Direct Payment"),
+                            ("escrow", "Escrow Payment"),
+                            ("subscription", "Subscription"),
+                        ],
+                        default="direct",
+                        help_text="Payment processing strategy (direct, escrow, subscription)",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "state",
+                    django_fsm.FSMField(
+                        choices=[
+                            ("draft", "Draft"),
+                            ("pending", "Pending"),
+                            ("processing", "Processing"),
+                            ("captured", "Captured"),
+                            ("held", "Held"),
+                            ("released", "Released"),
+                            ("settled", "Settled"),
+                            ("failed", "Failed"),
+                            ("cancelled", "Cancelled"),
+                            ("refunded", "Refunded"),
+                            ("partially_refunded", "Partially Refunded"),
+                        ],
+                        db_index=True,
+                        default="draft",
+                        help_text="Current state of the payment order (managed by FSM)",
+                        max_length=50,
+                        protected=True,
+                    ),
+                ),
+                (
+                    "reference_id",
+                    models.UUIDField(
+                        blank=True,
+                        help_text="UUID of related business entity (e.g., booking ID)",
+                        null=True,
+                    ),
+                ),
+                (
+                    "reference_type",
+                    models.CharField(
+                        blank=True,
+                        help_text="Type of related entity (e.g., 'booking', 'session')",
+                        max_length=50,
+                        null=True,
+                    ),
+                ),
+                (
+                    "stripe_payment_intent_id",
+                    models.CharField(
+                        blank=True,
+                        db_index=True,
+                        help_text="Stripe PaymentIntent ID (pi_xxx)",
+                        max_length=255,
+                        null=True,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "version",
+                    models.PositiveIntegerField(
+                        default=1,
+                        help_text="Version for optimistic locking - incremented on each save",
+                    ),
+                ),
+                (
+                    "captured_at",
+                    models.DateTimeField(
+                        blank=True,
+                        help_text="When payment was captured from customer",
+                        null=True,
+                    ),
+                ),
+                (
+                    "held_at",
+                    models.DateTimeField(
+                        blank=True,
+                        help_text="When funds were placed in escrow hold",
+                        null=True,
+                    ),
+                ),
+                (
+                    "released_at",
+                    models.DateTimeField(
+                        blank=True,
+                        help_text="When funds were released from escrow",
+                        null=True,
+                    ),
+                ),
+                (
+                    "settled_at",
+                    models.DateTimeField(
+                        blank=True,
+                        help_text="When payment was fully settled",
+                        null=True,
+                    ),
+                ),
+                (
+                    "failed_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When payment failed", null=True
+                    ),
+                ),
+                (
+                    "cancelled_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When payment was cancelled", null=True
+                    ),
+                ),
+                (
+                    "metadata",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="Arbitrary JSON metadata for extensibility",
+                    ),
+                ),
+                (
+                    "failure_reason",
+                    models.TextField(
+                        blank=True,
+                        help_text="Detailed reason if payment failed",
+                        null=True,
+                    ),
+                ),
+                (
+                    "payer",
+                    models.ForeignKey(
+                        help_text="User making the payment",
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="payment_orders",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Payment Order',
-                'verbose_name_plural': 'Payment Orders',
-                'ordering': ['-created_at'],
+                "verbose_name": "Payment Order",
+                "verbose_name_plural": "Payment Orders",
+                "ordering": ["-created_at"],
             },
         ),
         migrations.CreateModel(
-            name='Payout',
+            name="Payout",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, help_text='Unique identifier for this record', primary_key=True, serialize=False)),
-                ('amount_cents', models.PositiveBigIntegerField(help_text='Payout amount in smallest currency unit (e.g., cents)')),
-                ('currency', models.CharField(default='usd', help_text='ISO 4217 currency code (lowercase)', max_length=3)),
-                ('state', django_fsm.FSMField(choices=[('pending', 'Pending'), ('scheduled', 'Scheduled'), ('processing', 'Processing'), ('paid', 'Paid'), ('failed', 'Failed')], db_index=True, default='pending', help_text='Current state of the payout (managed by FSM)', max_length=50, protected=True)),
-                ('stripe_transfer_id', models.CharField(blank=True, db_index=True, help_text='Stripe Transfer ID (tr_xxx)', max_length=255, null=True, unique=True)),
-                ('version', models.PositiveIntegerField(default=1, help_text='Version for optimistic locking - incremented on each save')),
-                ('scheduled_for', models.DateTimeField(blank=True, db_index=True, help_text='When the payout is scheduled to be sent', null=True)),
-                ('paid_at', models.DateTimeField(blank=True, help_text='When payout was completed', null=True)),
-                ('failed_at', models.DateTimeField(blank=True, help_text='When payout failed', null=True)),
-                ('failure_reason', models.TextField(blank=True, help_text='Detailed reason if payout failed', null=True)),
-                ('metadata', models.JSONField(blank=True, default=dict, help_text='Arbitrary JSON metadata for extensibility')),
-                ('connected_account', models.ForeignKey(help_text='Connected account receiving the payout', on_delete=django.db.models.deletion.PROTECT, related_name='payouts', to='payments.connectedaccount')),
-                ('payment_order', models.ForeignKey(help_text='Payment order this payout originates from', on_delete=django.db.models.deletion.PROTECT, related_name='payouts', to='payments.paymentorder')),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        help_text="Unique identifier for this record",
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "amount_cents",
+                    models.PositiveBigIntegerField(
+                        help_text="Payout amount in smallest currency unit (e.g., cents)"
+                    ),
+                ),
+                (
+                    "currency",
+                    models.CharField(
+                        default="usd",
+                        help_text="ISO 4217 currency code (lowercase)",
+                        max_length=3,
+                    ),
+                ),
+                (
+                    "state",
+                    django_fsm.FSMField(
+                        choices=[
+                            ("pending", "Pending"),
+                            ("scheduled", "Scheduled"),
+                            ("processing", "Processing"),
+                            ("paid", "Paid"),
+                            ("failed", "Failed"),
+                        ],
+                        db_index=True,
+                        default="pending",
+                        help_text="Current state of the payout (managed by FSM)",
+                        max_length=50,
+                        protected=True,
+                    ),
+                ),
+                (
+                    "stripe_transfer_id",
+                    models.CharField(
+                        blank=True,
+                        db_index=True,
+                        help_text="Stripe Transfer ID (tr_xxx)",
+                        max_length=255,
+                        null=True,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "version",
+                    models.PositiveIntegerField(
+                        default=1,
+                        help_text="Version for optimistic locking - incremented on each save",
+                    ),
+                ),
+                (
+                    "scheduled_for",
+                    models.DateTimeField(
+                        blank=True,
+                        db_index=True,
+                        help_text="When the payout is scheduled to be sent",
+                        null=True,
+                    ),
+                ),
+                (
+                    "paid_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When payout was completed", null=True
+                    ),
+                ),
+                (
+                    "failed_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When payout failed", null=True
+                    ),
+                ),
+                (
+                    "failure_reason",
+                    models.TextField(
+                        blank=True,
+                        help_text="Detailed reason if payout failed",
+                        null=True,
+                    ),
+                ),
+                (
+                    "metadata",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="Arbitrary JSON metadata for extensibility",
+                    ),
+                ),
+                (
+                    "connected_account",
+                    models.ForeignKey(
+                        help_text="Connected account receiving the payout",
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="payouts",
+                        to="payments.connectedaccount",
+                    ),
+                ),
+                (
+                    "payment_order",
+                    models.ForeignKey(
+                        help_text="Payment order this payout originates from",
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="payouts",
+                        to="payments.paymentorder",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Payout',
-                'verbose_name_plural': 'Payouts',
-                'ordering': ['-created_at'],
+                "verbose_name": "Payout",
+                "verbose_name_plural": "Payouts",
+                "ordering": ["-created_at"],
             },
         ),
         migrations.CreateModel(
-            name='FundHold',
+            name="FundHold",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, help_text='Unique identifier for this record', primary_key=True, serialize=False)),
-                ('amount_cents', models.PositiveBigIntegerField(help_text='Amount held in smallest currency unit (e.g., cents)')),
-                ('currency', models.CharField(default='usd', help_text='ISO 4217 currency code (lowercase)', max_length=3)),
-                ('expires_at', models.DateTimeField(help_text='When this hold expires and requires action')),
-                ('released', models.BooleanField(db_index=True, default=False, help_text='Whether the hold has been released')),
-                ('released_at', models.DateTimeField(blank=True, help_text='When the hold was released', null=True)),
-                ('version', models.PositiveIntegerField(default=1, help_text='Version for optimistic locking - incremented on each save')),
-                ('metadata', models.JSONField(blank=True, default=dict, help_text='Arbitrary JSON metadata (e.g., release conditions)')),
-                ('payment_order', models.ForeignKey(help_text='Payment order this hold belongs to', on_delete=django.db.models.deletion.PROTECT, related_name='fund_holds', to='payments.paymentorder')),
-                ('released_to_payout', models.ForeignKey(blank=True, help_text='Payout that received the released funds', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='source_holds', to='payments.payout')),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        help_text="Unique identifier for this record",
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "amount_cents",
+                    models.PositiveBigIntegerField(
+                        help_text="Amount held in smallest currency unit (e.g., cents)"
+                    ),
+                ),
+                (
+                    "currency",
+                    models.CharField(
+                        default="usd",
+                        help_text="ISO 4217 currency code (lowercase)",
+                        max_length=3,
+                    ),
+                ),
+                (
+                    "expires_at",
+                    models.DateTimeField(
+                        help_text="When this hold expires and requires action"
+                    ),
+                ),
+                (
+                    "released",
+                    models.BooleanField(
+                        db_index=True,
+                        default=False,
+                        help_text="Whether the hold has been released",
+                    ),
+                ),
+                (
+                    "released_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When the hold was released", null=True
+                    ),
+                ),
+                (
+                    "version",
+                    models.PositiveIntegerField(
+                        default=1,
+                        help_text="Version for optimistic locking - incremented on each save",
+                    ),
+                ),
+                (
+                    "metadata",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="Arbitrary JSON metadata (e.g., release conditions)",
+                    ),
+                ),
+                (
+                    "payment_order",
+                    models.ForeignKey(
+                        help_text="Payment order this hold belongs to",
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="fund_holds",
+                        to="payments.paymentorder",
+                    ),
+                ),
+                (
+                    "released_to_payout",
+                    models.ForeignKey(
+                        blank=True,
+                        help_text="Payout that received the released funds",
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="source_holds",
+                        to="payments.payout",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Fund Hold',
-                'verbose_name_plural': 'Fund Holds',
-                'ordering': ['-created_at'],
+                "verbose_name": "Fund Hold",
+                "verbose_name_plural": "Fund Holds",
+                "ordering": ["-created_at"],
             },
         ),
         migrations.CreateModel(
-            name='Refund',
+            name="Refund",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, help_text='Unique identifier for this record', primary_key=True, serialize=False)),
-                ('amount_cents', models.PositiveBigIntegerField(help_text='Refund amount in smallest currency unit (e.g., cents)')),
-                ('currency', models.CharField(default='usd', help_text='ISO 4217 currency code (lowercase)', max_length=3)),
-                ('reason', models.CharField(blank=True, help_text='Reason for the refund (visible to customer)', max_length=255, null=True)),
-                ('state', django_fsm.FSMField(choices=[('requested', 'Requested'), ('processing', 'Processing'), ('completed', 'Completed'), ('failed', 'Failed')], db_index=True, default='requested', help_text='Current state of the refund (managed by FSM)', max_length=50, protected=True)),
-                ('stripe_refund_id', models.CharField(blank=True, db_index=True, help_text='Stripe Refund ID (re_xxx)', max_length=255, null=True, unique=True)),
-                ('version', models.PositiveIntegerField(default=1, help_text='Version for optimistic locking - incremented on each save')),
-                ('completed_at', models.DateTimeField(blank=True, help_text='When refund was completed', null=True)),
-                ('failed_at', models.DateTimeField(blank=True, help_text='When refund failed', null=True)),
-                ('failure_reason', models.TextField(blank=True, help_text='Detailed reason if refund failed', null=True)),
-                ('metadata', models.JSONField(blank=True, default=dict, help_text='Arbitrary JSON metadata for extensibility')),
-                ('payment_order', models.ForeignKey(help_text='Payment order being refunded', on_delete=django.db.models.deletion.PROTECT, related_name='refunds', to='payments.paymentorder')),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        help_text="Unique identifier for this record",
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "amount_cents",
+                    models.PositiveBigIntegerField(
+                        help_text="Refund amount in smallest currency unit (e.g., cents)"
+                    ),
+                ),
+                (
+                    "currency",
+                    models.CharField(
+                        default="usd",
+                        help_text="ISO 4217 currency code (lowercase)",
+                        max_length=3,
+                    ),
+                ),
+                (
+                    "reason",
+                    models.CharField(
+                        blank=True,
+                        help_text="Reason for the refund (visible to customer)",
+                        max_length=255,
+                        null=True,
+                    ),
+                ),
+                (
+                    "state",
+                    django_fsm.FSMField(
+                        choices=[
+                            ("requested", "Requested"),
+                            ("processing", "Processing"),
+                            ("completed", "Completed"),
+                            ("failed", "Failed"),
+                        ],
+                        db_index=True,
+                        default="requested",
+                        help_text="Current state of the refund (managed by FSM)",
+                        max_length=50,
+                        protected=True,
+                    ),
+                ),
+                (
+                    "stripe_refund_id",
+                    models.CharField(
+                        blank=True,
+                        db_index=True,
+                        help_text="Stripe Refund ID (re_xxx)",
+                        max_length=255,
+                        null=True,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "version",
+                    models.PositiveIntegerField(
+                        default=1,
+                        help_text="Version for optimistic locking - incremented on each save",
+                    ),
+                ),
+                (
+                    "completed_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When refund was completed", null=True
+                    ),
+                ),
+                (
+                    "failed_at",
+                    models.DateTimeField(
+                        blank=True, help_text="When refund failed", null=True
+                    ),
+                ),
+                (
+                    "failure_reason",
+                    models.TextField(
+                        blank=True,
+                        help_text="Detailed reason if refund failed",
+                        null=True,
+                    ),
+                ),
+                (
+                    "metadata",
+                    models.JSONField(
+                        blank=True,
+                        default=dict,
+                        help_text="Arbitrary JSON metadata for extensibility",
+                    ),
+                ),
+                (
+                    "payment_order",
+                    models.ForeignKey(
+                        help_text="Payment order being refunded",
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="refunds",
+                        to="payments.paymentorder",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Refund',
-                'verbose_name_plural': 'Refunds',
-                'ordering': ['-created_at'],
+                "verbose_name": "Refund",
+                "verbose_name_plural": "Refunds",
+                "ordering": ["-created_at"],
             },
         ),
         migrations.CreateModel(
-            name='WebhookEvent',
+            name="WebhookEvent",
             fields=[
-                ('created_at', models.DateTimeField(auto_now_add=True, db_index=True, help_text='Timestamp when this record was created')),
-                ('updated_at', models.DateTimeField(auto_now=True, help_text='Timestamp when this record was last modified')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, help_text='Unique identifier for this record', primary_key=True, serialize=False)),
-                ('stripe_event_id', models.CharField(db_index=True, help_text='Stripe Event ID (evt_xxx) - unique constraint for idempotency', max_length=255, unique=True)),
-                ('event_type', models.CharField(db_index=True, help_text="Stripe event type (e.g., 'payment_intent.succeeded')", max_length=100)),
-                ('payload', models.JSONField(help_text='Full webhook payload from Stripe (JSON)')),
-                ('status', models.CharField(choices=[('pending', 'Pending'), ('processing', 'Processing'), ('processed', 'Processed'), ('failed', 'Failed')], db_index=True, default='pending', help_text='Current processing status', max_length=20)),
-                ('processed_at', models.DateTimeField(blank=True, help_text='When event was successfully processed', null=True)),
-                ('error_message', models.TextField(blank=True, help_text='Error message if processing failed', null=True)),
-                ('retry_count', models.PositiveSmallIntegerField(default=0, help_text='Number of processing attempts')),
+                (
+                    "created_at",
+                    models.DateTimeField(
+                        auto_now_add=True,
+                        db_index=True,
+                        help_text="Timestamp when this record was created",
+                    ),
+                ),
+                (
+                    "updated_at",
+                    models.DateTimeField(
+                        auto_now=True,
+                        help_text="Timestamp when this record was last modified",
+                    ),
+                ),
+                (
+                    "id",
+                    models.UUIDField(
+                        default=uuid.uuid4,
+                        editable=False,
+                        help_text="Unique identifier for this record",
+                        primary_key=True,
+                        serialize=False,
+                    ),
+                ),
+                (
+                    "stripe_event_id",
+                    models.CharField(
+                        db_index=True,
+                        help_text="Stripe Event ID (evt_xxx) - unique constraint for idempotency",
+                        max_length=255,
+                        unique=True,
+                    ),
+                ),
+                (
+                    "event_type",
+                    models.CharField(
+                        db_index=True,
+                        help_text="Stripe event type (e.g., 'payment_intent.succeeded')",
+                        max_length=100,
+                    ),
+                ),
+                (
+                    "payload",
+                    models.JSONField(
+                        help_text="Full webhook payload from Stripe (JSON)"
+                    ),
+                ),
+                (
+                    "status",
+                    models.CharField(
+                        choices=[
+                            ("pending", "Pending"),
+                            ("processing", "Processing"),
+                            ("processed", "Processed"),
+                            ("failed", "Failed"),
+                        ],
+                        db_index=True,
+                        default="pending",
+                        help_text="Current processing status",
+                        max_length=20,
+                    ),
+                ),
+                (
+                    "processed_at",
+                    models.DateTimeField(
+                        blank=True,
+                        help_text="When event was successfully processed",
+                        null=True,
+                    ),
+                ),
+                (
+                    "error_message",
+                    models.TextField(
+                        blank=True,
+                        help_text="Error message if processing failed",
+                        null=True,
+                    ),
+                ),
+                (
+                    "retry_count",
+                    models.PositiveSmallIntegerField(
+                        default=0, help_text="Number of processing attempts"
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Webhook Event',
-                'verbose_name_plural': 'Webhook Events',
-                'ordering': ['-created_at'],
-                'indexes': [models.Index(fields=['status', 'created_at'], name='payments_we_status_f91a85_idx'), models.Index(fields=['event_type', 'created_at'], name='payments_we_event_t_ce1cab_idx'), models.Index(fields=['status', 'retry_count'], name='payments_we_status_5574c3_idx')],
+                "verbose_name": "Webhook Event",
+                "verbose_name_plural": "Webhook Events",
+                "ordering": ["-created_at"],
+                "indexes": [
+                    models.Index(
+                        fields=["status", "created_at"],
+                        name="payments_we_status_f91a85_idx",
+                    ),
+                    models.Index(
+                        fields=["event_type", "created_at"],
+                        name="payments_we_event_t_ce1cab_idx",
+                    ),
+                    models.Index(
+                        fields=["status", "retry_count"],
+                        name="payments_we_status_5574c3_idx",
+                    ),
+                ],
             },
         ),
         migrations.AddIndex(
-            model_name='paymentorder',
-            index=models.Index(fields=['reference_type', 'reference_id'], name='payments_pa_referen_c41c7a_idx'),
+            model_name="paymentorder",
+            index=models.Index(
+                fields=["reference_type", "reference_id"],
+                name="payments_pa_referen_c41c7a_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='paymentorder',
-            index=models.Index(fields=['payer', 'state'], name='payments_pa_payer_i_48f44a_idx'),
+            model_name="paymentorder",
+            index=models.Index(
+                fields=["payer", "state"], name="payments_pa_payer_i_48f44a_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='paymentorder',
-            index=models.Index(fields=['payer', 'created_at'], name='payments_pa_payer_i_b9faa6_idx'),
+            model_name="paymentorder",
+            index=models.Index(
+                fields=["payer", "created_at"], name="payments_pa_payer_i_b9faa6_idx"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='paymentorder',
-            constraint=models.CheckConstraint(condition=models.Q(('amount_cents__gt', 0)), name='payment_order_amount_positive'),
+            model_name="paymentorder",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("amount_cents__gt", 0)),
+                name="payment_order_amount_positive",
+            ),
         ),
         migrations.AddIndex(
-            model_name='payout',
-            index=models.Index(fields=['payment_order', 'state'], name='payments_pa_payment_ecbc95_idx'),
+            model_name="payout",
+            index=models.Index(
+                fields=["payment_order", "state"], name="payments_pa_payment_ecbc95_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='payout',
-            index=models.Index(fields=['connected_account', 'state'], name='payments_pa_connect_5af31e_idx'),
+            model_name="payout",
+            index=models.Index(
+                fields=["connected_account", "state"],
+                name="payments_pa_connect_5af31e_idx",
+            ),
         ),
         migrations.AddIndex(
-            model_name='payout',
-            index=models.Index(fields=['state', 'scheduled_for'], name='payments_pa_state_f73eb9_idx'),
+            model_name="payout",
+            index=models.Index(
+                fields=["state", "scheduled_for"], name="payments_pa_state_f73eb9_idx"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='payout',
-            constraint=models.CheckConstraint(condition=models.Q(('amount_cents__gt', 0)), name='payout_amount_positive'),
+            model_name="payout",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("amount_cents__gt", 0)),
+                name="payout_amount_positive",
+            ),
         ),
         migrations.AddIndex(
-            model_name='fundhold',
-            index=models.Index(fields=['released', 'expires_at'], name='payments_fu_release_ddfeaa_idx'),
+            model_name="fundhold",
+            index=models.Index(
+                fields=["released", "expires_at"], name="payments_fu_release_ddfeaa_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='fundhold',
-            index=models.Index(fields=['payment_order', 'released'], name='payments_fu_payment_baf411_idx'),
+            model_name="fundhold",
+            index=models.Index(
+                fields=["payment_order", "released"],
+                name="payments_fu_payment_baf411_idx",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='fundhold',
-            constraint=models.CheckConstraint(condition=models.Q(('amount_cents__gt', 0)), name='fund_hold_amount_positive'),
+            model_name="fundhold",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("amount_cents__gt", 0)),
+                name="fund_hold_amount_positive",
+            ),
         ),
         migrations.AddIndex(
-            model_name='refund',
-            index=models.Index(fields=['payment_order', 'state'], name='payments_re_payment_fe3e06_idx'),
+            model_name="refund",
+            index=models.Index(
+                fields=["payment_order", "state"], name="payments_re_payment_fe3e06_idx"
+            ),
         ),
         migrations.AddIndex(
-            model_name='refund',
-            index=models.Index(fields=['state', 'created_at'], name='payments_re_state_6b5506_idx'),
+            model_name="refund",
+            index=models.Index(
+                fields=["state", "created_at"], name="payments_re_state_6b5506_idx"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='refund',
-            constraint=models.CheckConstraint(condition=models.Q(('amount_cents__gt', 0)), name='refund_amount_positive'),
+            model_name="refund",
+            constraint=models.CheckConstraint(
+                condition=models.Q(("amount_cents__gt", 0)),
+                name="refund_amount_positive",
+            ),
         ),
     ]

@@ -151,8 +151,7 @@ class ConnectedAccount(UUIDPrimaryKeyMixin, BaseModel):
             True if account can receive payouts
         """
         return (
-            self.onboarding_status == OnboardingStatus.COMPLETE
-            and self.payouts_enabled
+            self.onboarding_status == OnboardingStatus.COMPLETE and self.payouts_enabled
         )
 
     @property

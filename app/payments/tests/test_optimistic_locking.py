@@ -8,7 +8,7 @@ for detecting concurrent modifications.
 import uuid
 
 import pytest
-from django.db import connection, transaction
+from django.db import transaction
 
 from core.exceptions import NotFoundError
 from payments.exceptions import StaleRecordError

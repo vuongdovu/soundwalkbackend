@@ -15,28 +15,15 @@ Usage:
 import pytest
 from django.utils import timezone
 
-from payments.models import (
-    ConnectedAccount,
-    FundHold,
-    PaymentOrder,
-    Payout,
-    Refund,
-    WebhookEvent,
-)
 from payments.state_machines import (
     OnboardingStatus,
-    PaymentOrderState,
     PaymentStrategyType,
-    PayoutState,
-    RefundState,
-    WebhookEventStatus,
 )
 from payments.tests.factories import (
     ConnectedAccountFactory,
     FundHoldFactory,
     PaymentOrderFactory,
     PayoutFactory,
-    ProfileFactory,
     RefundFactory,
     UserFactory,
     WebhookEventFactory,
