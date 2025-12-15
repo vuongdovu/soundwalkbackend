@@ -53,7 +53,8 @@ htmlcov/
 .pytest_cache/
 
 # Media uploads (test artifacts)
-app/media/
+app/uploads/
+app/media/profile_pictures/
 
 # Linting and type checking caches
 .ruff_cache/
