@@ -535,6 +535,89 @@ class InvalidStateTransitionError(ConflictError):
 
 
 # =============================================================================
+# Reconciliation Exceptions
+# =============================================================================
+
+
+class ReconciliationError(PaymentError):
+    """
+    Base exception for reconciliation operations.
+
+    All reconciliation-specific exceptions inherit from this class.
+    This covers errors during the detection and healing phases of
+    reconciliation.
+
+    Example:
+        try:
+            result = ReconciliationService.run_reconciliation()
+        except ReconciliationError as e:
+            logger.error(f"Reconciliation failed: {e}")
+    """
+
+    default_error_code: str = "RECONCILIATION_ERROR"
+
+
+class ReconciliationLockError(ReconciliationError):
+    """
+    Raised when reconciliation lock cannot be acquired.
+
+    This indicates another reconciliation run is already in progress.
+    Only one reconciliation run should execute at a time to prevent
+    duplicate healing attempts.
+
+    The caller should:
+    - Log the conflict
+    - Skip this scheduled run
+    - Let the current run complete
+
+    Example:
+        try:
+            with DistributedLock("reconciliation:run", ttl=3600, timeout=5):
+                run_reconciliation()
+        except LockAcquisitionError:
+            raise ReconciliationLockError(
+                "Another reconciliation run is in progress",
+                details={"lock_key": "reconciliation:run"}
+            )
+    """
+
+    default_error_code: str = "RECONCILIATION_LOCK_FAILED"
+
+
+class HealingError(ReconciliationError):
+    """
+    Raised when auto-healing fails for a discrepancy.
+
+    This exception indicates that a discrepancy was detected but
+    the automatic healing attempt failed. The discrepancy will be
+    recorded with a FAILED_TO_HEAL resolution for investigation.
+
+    Common causes:
+    - State transition not allowed (entity state changed)
+    - Database error during update
+    - Lock acquisition timeout
+    - Ledger entry creation failed
+
+    Example:
+        try:
+            payment_order.capture()
+            payment_order.save()
+        except TransitionNotAllowed as e:
+            raise HealingError(
+                f"Failed to heal payment order {payment_order.id}: {e}",
+                details={
+                    "entity_type": "payment_order",
+                    "entity_id": str(payment_order.id),
+                    "discrepancy_type": "stripe_succeeded_local_processing",
+                    "original_error": str(e),
+                }
+            )
+    """
+
+    default_error_code: str = "HEALING_FAILED"
+
+
+# =============================================================================
 # Exports
 # =============================================================================
 
@@ -560,4 +643,8 @@ __all__ = [
     "StaleRecordError",
     "LockAcquisitionError",
     "InvalidStateTransitionError",
+    # Reconciliation
+    "ReconciliationError",
+    "ReconciliationLockError",
+    "HealingError",
 ]

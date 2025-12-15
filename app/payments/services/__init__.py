@@ -5,6 +5,7 @@ This module provides:
 - PaymentOrchestrator: Entry point for payment initiation
 - PayoutService: Executes payouts to connected accounts
 - RefundService: Processes refunds to customers
+- ReconciliationService: Detects and heals state discrepancies
 
 Usage:
     from payments.services import PaymentOrchestrator, InitiatePaymentParams
@@ -31,6 +32,14 @@ Usage:
         amount_cents=2500,
         reason="Customer request",
     )
+
+    # Run reconciliation
+    from payments.services import ReconciliationService
+
+    result = ReconciliationService.run_reconciliation(
+        lookback_hours=24,
+        stuck_threshold_hours=2,
+    )
 """
 
 from payments.services.payment_orchestrator import (
@@ -41,6 +50,13 @@ from payments.services.payout_service import (
     PayoutExecutionResult,
     PayoutService,
 )
+from payments.services.reconciliation_service import (
+    Discrepancy,
+    DiscrepancyType,
+    HealingResult,
+    ReconciliationRunResult,
+    ReconciliationService,
+)
 from payments.services.refund_service import (
     RefundEligibility,
     RefundExecutionResult,
@@ -48,10 +64,15 @@ from payments.services.refund_service import (
 )
 
 __all__ = [
+    "Discrepancy",
+    "DiscrepancyType",
+    "HealingResult",
     "InitiatePaymentParams",
     "PaymentOrchestrator",
     "PayoutExecutionResult",
     "PayoutService",
+    "ReconciliationRunResult",
+    "ReconciliationService",
     "RefundEligibility",
     "RefundExecutionResult",
     "RefundService",

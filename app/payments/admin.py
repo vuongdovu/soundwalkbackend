@@ -7,12 +7,17 @@ and registers payment domain models with the Django admin.
 
 from django.contrib import admin
 
+from django.utils import timezone
+
 from payments.ledger.admin import LedgerAccountAdmin, LedgerEntryAdmin
 from payments.models import (
     ConnectedAccount,
+    DiscrepancyResolution,
     FundHold,
     PaymentOrder,
     Payout,
+    ReconciliationDiscrepancy,
+    ReconciliationRun,
     Refund,
     WebhookEvent,
 )
@@ -26,6 +31,8 @@ __all__ = [
     "PayoutAdmin",
     "RefundAdmin",
     "WebhookEventAdmin",
+    "ReconciliationRunAdmin",
+    "ReconciliationDiscrepancyAdmin",
 ]
 
 
@@ -563,3 +570,270 @@ class WebhookEventAdmin(admin.ModelAdmin):
         Payload and event details are immutable.
         """
         return True
+
+
+# =============================================================================
+# Reconciliation Admin
+# =============================================================================
+
+
+class ReconciliationDiscrepancyInline(admin.TabularInline):
+    """Inline display of discrepancies for a reconciliation run."""
+
+    model = ReconciliationDiscrepancy
+    extra = 0
+    readonly_fields = [
+        "id",
+        "entity_type",
+        "entity_id",
+        "stripe_id",
+        "discrepancy_type",
+        "local_state",
+        "stripe_state",
+        "resolution",
+        "reviewed",
+    ]
+    can_delete = False
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None) -> bool:
+        return False
+
+
+@admin.register(ReconciliationRun)
+class ReconciliationRunAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for ReconciliationRun.
+
+    Provides visibility into reconciliation run history and results.
+    Runs are created by the reconciliation service and should not be
+    manually modified.
+    """
+
+    list_display = [
+        "id",
+        "started_at",
+        "status",
+        "duration_display",
+        "payment_orders_checked",
+        "payouts_checked",
+        "discrepancies_found",
+        "auto_healed",
+        "flagged_for_review",
+        "failed_to_heal",
+    ]
+    list_filter = ["status", "started_at"]
+    search_fields = ["id"]
+    readonly_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "started_at",
+        "completed_at",
+        "duration_display",
+        "lookback_hours",
+        "stuck_threshold_hours",
+        "payment_orders_checked",
+        "payouts_checked",
+        "discrepancies_found",
+        "auto_healed",
+        "flagged_for_review",
+        "failed_to_heal",
+        "status",
+        "error_message",
+    ]
+    date_hierarchy = "started_at"
+    ordering = ["-started_at"]
+    inlines = [ReconciliationDiscrepancyInline]
+
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("id", "status", "duration_display"),
+            },
+        ),
+        (
+            "Configuration",
+            {
+                "fields": ("lookback_hours", "stuck_threshold_hours"),
+            },
+        ),
+        (
+            "Results Summary",
+            {
+                "fields": (
+                    "payment_orders_checked",
+                    "payouts_checked",
+                    "discrepancies_found",
+                    "auto_healed",
+                    "flagged_for_review",
+                    "failed_to_heal",
+                ),
+            },
+        ),
+        (
+            "Timing",
+            {
+                "fields": ("started_at", "completed_at"),
+            },
+        ),
+        (
+            "Error Info",
+            {
+                "fields": ("error_message",),
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+
+    def duration_display(self, obj: ReconciliationRun) -> str:
+        """Display the run duration in human-readable format."""
+        if obj.duration_seconds is not None:
+            return f"{obj.duration_seconds:.1f}s"
+        return "Running..."
+
+    duration_display.short_description = "Duration"
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        """Disable delete for reconciliation runs (audit trail)."""
+        return False
+
+    def has_add_permission(self, request) -> bool:
+        """Disable adding reconciliation runs through admin."""
+        return False
+
+
+@admin.register(ReconciliationDiscrepancy)
+class ReconciliationDiscrepancyAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for ReconciliationDiscrepancy.
+
+    Provides a review queue for operators to investigate and resolve
+    flagged discrepancies. Supports bulk marking as reviewed.
+    """
+
+    list_display = [
+        "id",
+        "run_link",
+        "entity_type",
+        "entity_id",
+        "discrepancy_type",
+        "local_state",
+        "stripe_state",
+        "resolution",
+        "reviewed",
+        "created_at",
+    ]
+    list_filter = [
+        "resolution",
+        "reviewed",
+        "entity_type",
+        "discrepancy_type",
+        "created_at",
+    ]
+    search_fields = [
+        "id",
+        "entity_id",
+        "stripe_id",
+        "discrepancy_type",
+    ]
+    readonly_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "run",
+        "entity_type",
+        "entity_id",
+        "stripe_id",
+        "discrepancy_type",
+        "local_state",
+        "stripe_state",
+        "details",
+        "resolution",
+        "action_taken",
+        "error_message",
+        "ledger_entry_id",
+    ]
+    date_hierarchy = "created_at"
+    ordering = ["-created_at"]
+    actions = ["mark_reviewed"]
+
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("id", "run", "resolution"),
+            },
+        ),
+        (
+            "Entity",
+            {
+                "fields": ("entity_type", "entity_id", "stripe_id"),
+            },
+        ),
+        (
+            "Discrepancy Details",
+            {
+                "fields": (
+                    "discrepancy_type",
+                    "local_state",
+                    "stripe_state",
+                    "details",
+                ),
+            },
+        ),
+        (
+            "Resolution",
+            {
+                "fields": ("action_taken", "error_message", "ledger_entry_id"),
+            },
+        ),
+        (
+            "Review",
+            {
+                "fields": ("reviewed", "reviewed_at", "reviewed_by", "review_notes"),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+
+    def run_link(self, obj: ReconciliationDiscrepancy) -> str:
+        """Display a link to the reconciliation run."""
+        if obj.run:
+            return str(obj.run.id)[:8]
+        return "-"
+
+    run_link.short_description = "Run"
+
+    @admin.action(description="Mark selected discrepancies as reviewed")
+    def mark_reviewed(self, request, queryset):
+        """Bulk action to mark discrepancies as reviewed."""
+        count = queryset.filter(
+            resolution=DiscrepancyResolution.FLAGGED_FOR_REVIEW,
+            reviewed=False,
+        ).update(
+            reviewed=True,
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user,
+        )
+        self.message_user(request, f"Marked {count} discrepancies as reviewed.")
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        """Disable delete for discrepancies (audit trail)."""
+        return False
+
+    def has_add_permission(self, request) -> bool:
+        """Disable adding discrepancies through admin."""
+        return False

@@ -775,6 +775,137 @@ class StripeAdapter:
             cls._handle_stripe_error(e, log_context, duration_ms)
             raise
 
+    @classmethod
+    def retrieve_transfer(
+        cls,
+        transfer_id: str,
+        trace_id: str | None = None,
+    ) -> TransferResult:
+        """
+        Retrieve a Transfer by ID.
+
+        Used by the reconciliation service to verify transfer status
+        against local Payout records.
+
+        Args:
+            transfer_id: Stripe Transfer ID (tr_xxx)
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            TransferResult with transfer details including status in raw_response
+
+        Raises:
+            StripeInvalidRequestError: Transfer not found
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        log_context = {
+            "operation": "retrieve_transfer",
+            "transfer_id": transfer_id,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.debug("Starting Stripe operation", extra=log_context)
+
+        try:
+            transfer = stripe.Transfer.retrieve(transfer_id)
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.debug(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "amount": transfer.amount,
+                    "destination": transfer.destination,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return TransferResult(
+                id=transfer.id,
+                amount_cents=transfer.amount,
+                currency=transfer.currency,
+                destination_account=transfer.destination,
+                metadata=dict(transfer.metadata or {}),
+                raw_response=transfer.to_dict(),
+            )
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    @classmethod
+    def list_recent_transfers(
+        cls,
+        created_after: datetime,
+        limit: int = 100,
+        trace_id: str | None = None,
+    ) -> list[TransferResult]:
+        """
+        List recent Transfers for reconciliation.
+
+        Used by the reconciliation service to compare local Payout records
+        against Stripe's Transfer records.
+
+        Args:
+            created_after: Only return Transfers created after this time
+            limit: Maximum number to return (default: 100, max: 100)
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            List of TransferResult objects
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        created_timestamp = int(created_after.timestamp())
+
+        log_context = {
+            "operation": "list_recent_transfers",
+            "created_after": created_timestamp,
+            "limit": limit,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.info("Starting Stripe operation", extra=log_context)
+
+        try:
+            transfers = stripe.Transfer.list(
+                created={"gte": created_timestamp},
+                limit=min(limit, 100),
+            )
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "count": len(transfers.data),
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return [
+                TransferResult(
+                    id=transfer.id,
+                    amount_cents=transfer.amount,
+                    currency=transfer.currency,
+                    destination_account=transfer.destination,
+                    metadata=dict(transfer.metadata or {}),
+                    raw_response=transfer.to_dict(),
+                )
+                for transfer in transfers.data
+            ]
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
     # =========================================================================
     # Webhook Verification
     # =========================================================================
