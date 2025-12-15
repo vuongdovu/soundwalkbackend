@@ -67,12 +67,13 @@ class PayoutState(models.TextChoices):
     """
     States for the Payout model lifecycle.
 
-    Terminal states: PAID, FAILED (but can retry from FAILED)
+    Terminal states: PAID, FAILED (but can retry from FAILED), CANCELLED
 
     State Flow:
         PENDING → SCHEDULED → PROCESSING → PAID
         PENDING → PROCESSING → PAID (immediate)
         PROCESSING → FAILED → PENDING (retry)
+        PENDING/SCHEDULED → CANCELLED (for refund processing)
     """
 
     PENDING = "pending", "Pending"
@@ -80,6 +81,7 @@ class PayoutState(models.TextChoices):
     PROCESSING = "processing", "Processing"
     PAID = "paid", "Paid"
     FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
 
 
 class RefundState(models.TextChoices):

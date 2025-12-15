@@ -212,6 +212,12 @@ class PaymentOrder(UUIDPrimaryKeyMixin, BaseModel):
         help_text="When payment was cancelled",
     )
 
+    refunded_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When first refund was processed (full or partial)",
+    )
+
     # ==========================================================================
     # Metadata & Error Info
     # ==========================================================================
@@ -437,35 +443,59 @@ class PaymentOrder(UUIDPrimaryKeyMixin, BaseModel):
 
     @transition(
         field=state,
-        source=[PaymentOrderState.CAPTURED, PaymentOrderState.SETTLED],
+        source=[
+            PaymentOrderState.CAPTURED,
+            PaymentOrderState.HELD,
+            PaymentOrderState.RELEASED,
+            PaymentOrderState.SETTLED,
+            PaymentOrderState.PARTIALLY_REFUNDED,
+        ],
         target=PaymentOrderState.REFUNDED,
     )
     def refund_full(self):
         """
         Mark as fully refunded.
 
-        Transition: CAPTURED/SETTLED -> REFUNDED
+        Transition: CAPTURED/HELD/RELEASED/SETTLED/PARTIALLY_REFUNDED -> REFUNDED
 
-        Called when a full refund is processed. Creates a Refund
-        record with the full amount.
+        Called when a full refund is processed, or when the final
+        partial refund exhausts the remaining amount.
+
+        Note:
+            For HELD state (escrow), the full amount including
+            platform fee is refunded since fee hasn't been taken yet.
+            For RELEASED state, payout must be cancelled first.
         """
-        pass
+        self.refunded_at = timezone.now()
 
     @transition(
         field=state,
-        source=[PaymentOrderState.CAPTURED, PaymentOrderState.SETTLED],
+        source=[
+            PaymentOrderState.CAPTURED,
+            PaymentOrderState.HELD,
+            PaymentOrderState.RELEASED,
+            PaymentOrderState.SETTLED,
+            PaymentOrderState.PARTIALLY_REFUNDED,
+        ],
         target=PaymentOrderState.PARTIALLY_REFUNDED,
     )
     def refund_partial(self):
         """
         Mark as partially refunded.
 
-        Transition: CAPTURED/SETTLED -> PARTIALLY_REFUNDED
+        Transition: CAPTURED/HELD/RELEASED/SETTLED/PARTIALLY_REFUNDED -> PARTIALLY_REFUNDED
 
         Called when a partial refund is processed. The payment
-        remains otherwise settled.
+        remains otherwise in its current state but marked as
+        partially refunded.
+
+        Note:
+            Multiple partial refunds are allowed. Each creates
+            a new Refund record. Total refunds must not exceed
+            original payment amount.
         """
-        pass
+        if self.refunded_at is None:
+            self.refunded_at = timezone.now()
 
 
 class FundHold(UUIDPrimaryKeyMixin, BaseModel):

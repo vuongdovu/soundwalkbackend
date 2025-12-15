@@ -165,6 +165,12 @@ class Payout(UUIDPrimaryKeyMixin, BaseModel):
         help_text="When payout failed",
     )
 
+    cancelled_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When payout was cancelled (e.g., for refund processing)",
+    )
+
     # ==========================================================================
     # Metadata & Error Info
     # ==========================================================================
@@ -326,6 +332,27 @@ class Payout(UUIDPrimaryKeyMixin, BaseModel):
         self.failure_reason = None
         self.stripe_transfer_id = None
 
+    @transition(
+        field=state,
+        source=[PayoutState.PENDING, PayoutState.SCHEDULED],
+        target=PayoutState.CANCELLED,
+    )
+    def cancel(self, reason: str | None = None):
+        """
+        Cancel a pending or scheduled payout.
+
+        Transition: PENDING/SCHEDULED -> CANCELLED
+
+        Used during refund processing when funds need to be returned
+        to the customer instead of paid out to the recipient.
+
+        Args:
+            reason: Optional reason for cancellation
+        """
+        self.cancelled_at = timezone.now()
+        if reason:
+            self.failure_reason = reason
+
     # ==========================================================================
     # Properties
     # ==========================================================================
@@ -344,3 +371,13 @@ class Payout(UUIDPrimaryKeyMixin, BaseModel):
     def can_retry(self) -> bool:
         """Check if payout can be retried."""
         return self.state == PayoutState.FAILED
+
+    @property
+    def can_cancel(self) -> bool:
+        """Check if payout can be cancelled (for refund processing)."""
+        return self.state in [PayoutState.PENDING, PayoutState.SCHEDULED]
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if payout was cancelled."""
+        return self.state == PayoutState.CANCELLED

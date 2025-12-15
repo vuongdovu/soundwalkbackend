@@ -152,6 +152,60 @@ class PaymentProcessingError(PaymentError):
 
 
 # =============================================================================
+# Refund-Specific Exceptions
+# =============================================================================
+
+
+class RefundNotAllowedError(PaymentValidationError):
+    """
+    Raised when a refund cannot be processed.
+
+    Use for:
+    - Payment not in refundable state (DRAFT, PENDING, FAILED, etc.)
+    - Refund amount exceeds remaining refundable amount
+    - Payout already completed (manual intervention required)
+    - Payment already fully refunded
+
+    Example:
+        if payment_order.state in non_refundable_states:
+            raise RefundNotAllowedError(
+                f"Cannot refund payment in '{payment_order.state}' state",
+                details={
+                    "payment_order_id": str(payment_order.id),
+                    "current_state": payment_order.state,
+                    "reason": "INVALID_STATE",
+                }
+            )
+    """
+
+    default_error_code: str = "REFUND_NOT_ALLOWED"
+
+
+class PayoutCancellationError(PaymentProcessingError):
+    """
+    Raised when a payout cannot be cancelled for refund processing.
+
+    Use for:
+    - Payout already in PROCESSING state (in flight)
+    - Payout already in PAID state (completed)
+    - Payout not found for the payment order
+
+    Example:
+        if payout.state == PayoutState.PROCESSING:
+            raise PayoutCancellationError(
+                "Cannot cancel payout in PROCESSING state",
+                details={
+                    "payout_id": str(payout.id),
+                    "payout_state": payout.state,
+                    "reason": "PAYOUT_IN_FLIGHT",
+                }
+            )
+    """
+
+    default_error_code: str = "PAYOUT_CANCELLATION_FAILED"
+
+
+# =============================================================================
 # Stripe-Specific Exceptions
 # =============================================================================
 
@@ -490,6 +544,9 @@ __all__ = [
     "PaymentNotFoundError",
     "PaymentValidationError",
     "PaymentProcessingError",
+    # Refund-specific
+    "RefundNotAllowedError",
+    "PayoutCancellationError",
     # Stripe-specific
     "StripeError",
     "StripeCardDeclinedError",
