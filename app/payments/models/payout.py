@@ -47,9 +47,14 @@ class Payout(UUIDPrimaryKeyMixin, BaseModel):
     through paid or failed states.
 
     State Flow:
-        PENDING -> SCHEDULED -> PROCESSING -> PAID
-        PENDING -> PROCESSING -> PAID (immediate)
-        PROCESSING -> FAILED -> PENDING (retry)
+        PENDING -> SCHEDULED -> PROCESSING -> SCHEDULED -> PAID
+        PENDING -> PROCESSING -> SCHEDULED -> PAID (via webhooks)
+        PROCESSING/SCHEDULED -> FAILED -> PENDING (retry)
+
+    Webhook-driven state changes:
+        transfer.created: PROCESSING -> SCHEDULED (Stripe confirms transfer queued)
+        transfer.paid: PROCESSING/SCHEDULED -> PAID (transfer completed)
+        transfer.failed: PROCESSING/SCHEDULED -> FAILED (transfer failed)
 
     Fields:
         payment_order: Source PaymentOrder for this payout
@@ -253,30 +258,49 @@ class Payout(UUIDPrimaryKeyMixin, BaseModel):
     @transition(
         field=state,
         source=PayoutState.PROCESSING,
+        target=PayoutState.SCHEDULED,
+    )
+    def mark_scheduled(self):
+        """
+        Mark payout as scheduled in Stripe's system.
+
+        Transition: PROCESSING -> SCHEDULED
+
+        Called when transfer.created webhook confirms Stripe has
+        queued the transfer for processing. This indicates Stripe
+        has accepted the transfer and will process it.
+        """
+        pass
+
+    @transition(
+        field=state,
+        source=[PayoutState.PROCESSING, PayoutState.SCHEDULED],
         target=PayoutState.PAID,
     )
     def complete(self):
         """
         Mark payout as completed.
 
-        Transition: PROCESSING -> PAID
+        Transition: PROCESSING/SCHEDULED -> PAID
 
-        Called when Stripe confirms the transfer was successful.
+        Called when Stripe confirms the transfer was successful
+        (transfer.paid webhook).
         """
         self.paid_at = timezone.now()
 
     @transition(
         field=state,
-        source=PayoutState.PROCESSING,
+        source=[PayoutState.PROCESSING, PayoutState.SCHEDULED],
         target=PayoutState.FAILED,
     )
     def fail(self, reason: str | None = None):
         """
         Mark payout as failed.
 
-        Transition: PROCESSING -> FAILED
+        Transition: PROCESSING/SCHEDULED -> FAILED
 
-        Called when Stripe reports the transfer failed.
+        Called when Stripe reports the transfer failed
+        (transfer.failed webhook).
 
         Args:
             reason: Optional failure reason for debugging

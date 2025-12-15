@@ -30,9 +30,14 @@ from django.db import transaction
 
 from core.services import ServiceResult
 
-from payments.models import PaymentOrder, WebhookEvent
+from payments.models import ConnectedAccount, PaymentOrder, Payout, Refund, WebhookEvent
 from payments.services import PaymentOrchestrator
-from payments.state_machines import PaymentOrderState
+from payments.state_machines import (
+    OnboardingStatus,
+    PaymentOrderState,
+    PayoutState,
+    RefundState,
+)
 
 if TYPE_CHECKING:
     pass
@@ -306,3 +311,588 @@ def handle_payment_intent_canceled(webhook_event: WebhookEvent) -> ServiceResult
             )
 
         return ServiceResult.success(payment_order)
+
+
+# =============================================================================
+# Transfer Handlers (Payout lifecycle)
+# =============================================================================
+
+
+@register_handler("transfer.created")
+def handle_transfer_created(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle transfer creation confirmation from Stripe.
+
+    Called when Stripe sends transfer.created webhook. This confirms
+    that Stripe has accepted the transfer request and queued it for
+    processing. Transitions the Payout from PROCESSING to SCHEDULED.
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    transfer_id = webhook_event.get_object_id()
+
+    if not transfer_id:
+        logger.error(
+            "transfer.created: Could not extract transfer_id",
+            extra={"stripe_event_id": webhook_event.stripe_event_id},
+        )
+        return ServiceResult.failure(
+            "Could not extract transfer_id from webhook",
+            error_code="INVALID_WEBHOOK_PAYLOAD",
+        )
+
+    logger.info(
+        "Processing transfer.created",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "transfer_id": transfer_id,
+        },
+    )
+
+    with transaction.atomic():
+        # Lock the Payout for update
+        payout = (
+            Payout.objects.select_for_update()
+            .filter(stripe_transfer_id=transfer_id)
+            .first()
+        )
+
+        if not payout:
+            # This could be an external transfer or a race condition
+            logger.warning(
+                "Payout not found for transfer_id (may be external)",
+                extra={
+                    "transfer_id": transfer_id,
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                },
+            )
+            return ServiceResult.success(None)
+
+        # Check current state and transition if appropriate
+        if payout.state == PayoutState.PROCESSING:
+            payout.mark_scheduled()
+            payout.save()
+            logger.info(
+                "Payout marked as scheduled",
+                extra={
+                    "payout_id": str(payout.id),
+                    "transfer_id": transfer_id,
+                },
+            )
+        elif payout.state in [PayoutState.SCHEDULED, PayoutState.PAID]:
+            # Already in a later state - idempotent
+            logger.info(
+                "Payout already in later state, ignoring transfer.created",
+                extra={
+                    "payout_id": str(payout.id),
+                    "current_state": payout.state,
+                },
+            )
+        else:
+            # Wrong state - log warning but don't fail
+            logger.warning(
+                "Unexpected payout state for transfer.created",
+                extra={
+                    "payout_id": str(payout.id),
+                    "current_state": payout.state,
+                    "transfer_id": transfer_id,
+                },
+            )
+
+        return ServiceResult.success(payout)
+
+
+@register_handler("transfer.paid")
+def handle_transfer_paid(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle transfer completion from Stripe.
+
+    Called when Stripe sends transfer.paid webhook. This confirms
+    that money has been transferred to the connected account.
+    Transitions the Payout to PAID state.
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    transfer_id = webhook_event.get_object_id()
+
+    if not transfer_id:
+        logger.error(
+            "transfer.paid: Could not extract transfer_id",
+            extra={"stripe_event_id": webhook_event.stripe_event_id},
+        )
+        return ServiceResult.failure(
+            "Could not extract transfer_id from webhook",
+            error_code="INVALID_WEBHOOK_PAYLOAD",
+        )
+
+    logger.info(
+        "Processing transfer.paid",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "transfer_id": transfer_id,
+        },
+    )
+
+    with transaction.atomic():
+        # Lock the Payout for update
+        payout = (
+            Payout.objects.select_for_update()
+            .filter(stripe_transfer_id=transfer_id)
+            .first()
+        )
+
+        if not payout:
+            logger.warning(
+                "Payout not found for transfer_id",
+                extra={
+                    "transfer_id": transfer_id,
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                },
+            )
+            return ServiceResult.failure(
+                f"Payout not found for transfer: {transfer_id}",
+                error_code="PAYOUT_NOT_FOUND",
+            )
+
+        # Check current state and transition if appropriate
+        if payout.state == PayoutState.PAID:
+            # Already paid - idempotent
+            logger.info(
+                "Payout already paid, ignoring duplicate webhook",
+                extra={"payout_id": str(payout.id)},
+            )
+            return ServiceResult.success(payout)
+
+        if payout.state in [PayoutState.PROCESSING, PayoutState.SCHEDULED]:
+            payout.complete()
+            payout.save()
+            logger.info(
+                "Payout completed successfully",
+                extra={
+                    "payout_id": str(payout.id),
+                    "transfer_id": transfer_id,
+                    "amount_cents": payout.amount_cents,
+                },
+            )
+        else:
+            # Wrong state - log warning but return success for graceful degradation
+            logger.warning(
+                "Unexpected payout state for transfer.paid",
+                extra={
+                    "payout_id": str(payout.id),
+                    "current_state": payout.state,
+                    "transfer_id": transfer_id,
+                },
+            )
+
+        return ServiceResult.success(payout)
+
+
+@register_handler("transfer.failed")
+def handle_transfer_failed(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle transfer failure from Stripe.
+
+    Called when Stripe sends transfer.failed webhook. This indicates
+    that the transfer could not be completed. Transitions the Payout
+    to FAILED state with the failure reason.
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    transfer_id = webhook_event.get_object_id()
+
+    if not transfer_id:
+        logger.error(
+            "transfer.failed: Could not extract transfer_id",
+            extra={"stripe_event_id": webhook_event.stripe_event_id},
+        )
+        return ServiceResult.failure(
+            "Could not extract transfer_id from webhook",
+            error_code="INVALID_WEBHOOK_PAYLOAD",
+        )
+
+    # Extract failure reason from payload
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+    failure_code = data_object.get("failure_code", "unknown")
+    failure_message = data_object.get("failure_message", "Transfer failed")
+    reason = f"{failure_code}: {failure_message}"
+
+    logger.info(
+        "Processing transfer.failed",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "transfer_id": transfer_id,
+            "reason": reason,
+        },
+    )
+
+    with transaction.atomic():
+        # Lock the Payout for update
+        payout = (
+            Payout.objects.select_for_update()
+            .filter(stripe_transfer_id=transfer_id)
+            .first()
+        )
+
+        if not payout:
+            logger.warning(
+                "Payout not found for transfer_id",
+                extra={
+                    "transfer_id": transfer_id,
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                },
+            )
+            return ServiceResult.failure(
+                f"Payout not found for transfer: {transfer_id}",
+                error_code="PAYOUT_NOT_FOUND",
+            )
+
+        # Check current state and transition if appropriate
+        if payout.state == PayoutState.FAILED:
+            # Already failed - idempotent
+            logger.info(
+                "Payout already failed, ignoring duplicate webhook",
+                extra={"payout_id": str(payout.id)},
+            )
+            return ServiceResult.success(payout)
+
+        if payout.state in [PayoutState.PROCESSING, PayoutState.SCHEDULED]:
+            payout.fail(reason=reason)
+            payout.save()
+            logger.info(
+                "Payout marked as failed",
+                extra={
+                    "payout_id": str(payout.id),
+                    "transfer_id": transfer_id,
+                    "reason": reason,
+                },
+            )
+        else:
+            # Wrong state - log warning but return success for graceful degradation
+            logger.warning(
+                "Unexpected payout state for transfer.failed",
+                extra={
+                    "payout_id": str(payout.id),
+                    "current_state": payout.state,
+                    "transfer_id": transfer_id,
+                },
+            )
+
+        return ServiceResult.success(payout)
+
+
+# =============================================================================
+# Refund Handler
+# =============================================================================
+
+
+@register_handler("charge.refunded")
+def handle_charge_refunded(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle refund notification from Stripe.
+
+    Called when Stripe sends charge.refunded webhook. This is fired
+    when a refund is processed, either initiated through our system
+    or directly via the Stripe dashboard.
+
+    This handler:
+    1. Finds the PaymentOrder via payment_intent
+    2. Creates or updates Refund records for each refund
+    3. Updates PaymentOrder state (REFUNDED or PARTIALLY_REFUNDED)
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    # Extract charge and payment intent info
+    charge_id = data_object.get("id")
+    payment_intent_id = data_object.get("payment_intent")
+    amount_refunded = data_object.get("amount_refunded", 0)
+    amount = data_object.get("amount", 0)
+    currency = data_object.get("currency", "usd")
+    refunds_data = data_object.get("refunds", {}).get("data", [])
+
+    if not payment_intent_id:
+        logger.error(
+            "charge.refunded: Could not extract payment_intent",
+            extra={
+                "stripe_event_id": webhook_event.stripe_event_id,
+                "charge_id": charge_id,
+            },
+        )
+        return ServiceResult.failure(
+            "Could not extract payment_intent from charge.refunded",
+            error_code="INVALID_WEBHOOK_PAYLOAD",
+        )
+
+    logger.info(
+        "Processing charge.refunded",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "charge_id": charge_id,
+            "payment_intent_id": payment_intent_id,
+            "amount_refunded": amount_refunded,
+            "total_amount": amount,
+        },
+    )
+
+    with transaction.atomic():
+        # Lock the PaymentOrder for update
+        payment_order = (
+            PaymentOrder.objects.select_for_update()
+            .filter(stripe_payment_intent_id=payment_intent_id)
+            .first()
+        )
+
+        if not payment_order:
+            logger.warning(
+                "PaymentOrder not found for charge.refunded",
+                extra={
+                    "payment_intent_id": payment_intent_id,
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                },
+            )
+            return ServiceResult.failure(
+                f"PaymentOrder not found for intent: {payment_intent_id}",
+                error_code="PAYMENT_ORDER_NOT_FOUND",
+            )
+
+        # Process each refund in the list
+        for refund_data in refunds_data:
+            stripe_refund_id = refund_data.get("id")
+            refund_amount = refund_data.get("amount", 0)
+            refund_reason = refund_data.get("reason") or "No reason provided"
+
+            if not stripe_refund_id:
+                continue
+
+            # Check if Refund record already exists
+            existing_refund = Refund.objects.filter(
+                stripe_refund_id=stripe_refund_id
+            ).first()
+
+            if existing_refund:
+                # Update existing refund if not completed
+                if existing_refund.state == RefundState.COMPLETED:
+                    logger.info(
+                        "Refund already completed, skipping",
+                        extra={
+                            "refund_id": str(existing_refund.id),
+                            "stripe_refund_id": stripe_refund_id,
+                        },
+                    )
+                    continue
+
+                # Transition to completed if not already
+                if existing_refund.state in [
+                    RefundState.REQUESTED,
+                    RefundState.PROCESSING,
+                ]:
+                    if existing_refund.state == RefundState.REQUESTED:
+                        existing_refund.process()
+                    existing_refund.complete()
+                    existing_refund.save()
+                    logger.info(
+                        "Existing refund marked as completed",
+                        extra={
+                            "refund_id": str(existing_refund.id),
+                            "stripe_refund_id": stripe_refund_id,
+                        },
+                    )
+            else:
+                # Create new Refund record for externally-initiated refunds
+                # This ensures a complete audit trail
+                new_refund = Refund.objects.create(
+                    payment_order=payment_order,
+                    amount_cents=refund_amount,
+                    currency=currency,
+                    stripe_refund_id=stripe_refund_id,
+                    reason=refund_reason,
+                    # Start in REQUESTED, then transition through states
+                )
+                new_refund.process()
+                new_refund.complete()
+                new_refund.save()
+                logger.info(
+                    "Created new refund record from webhook",
+                    extra={
+                        "refund_id": str(new_refund.id),
+                        "stripe_refund_id": stripe_refund_id,
+                        "amount_cents": refund_amount,
+                    },
+                )
+
+        # Update PaymentOrder state based on refund totals
+        is_full_refund = amount_refunded >= amount
+
+        if payment_order.state == PaymentOrderState.REFUNDED:
+            # Already fully refunded - idempotent
+            logger.info(
+                "PaymentOrder already refunded, no state change",
+                extra={"payment_order_id": str(payment_order.id)},
+            )
+        elif is_full_refund:
+            # Full refund
+            if payment_order.state not in [
+                PaymentOrderState.REFUNDED,
+                PaymentOrderState.CANCELLED,
+            ]:
+                try:
+                    payment_order.refund_full()
+                    payment_order.save()
+                    logger.info(
+                        "PaymentOrder marked as fully refunded",
+                        extra={"payment_order_id": str(payment_order.id)},
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not transition to REFUNDED: {e}",
+                        extra={
+                            "payment_order_id": str(payment_order.id),
+                            "current_state": payment_order.state,
+                        },
+                    )
+        else:
+            # Partial refund
+            if payment_order.state not in [
+                PaymentOrderState.PARTIALLY_REFUNDED,
+                PaymentOrderState.REFUNDED,
+            ]:
+                try:
+                    payment_order.refund_partial()
+                    payment_order.save()
+                    logger.info(
+                        "PaymentOrder marked as partially refunded",
+                        extra={"payment_order_id": str(payment_order.id)},
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not transition to PARTIALLY_REFUNDED: {e}",
+                        extra={
+                            "payment_order_id": str(payment_order.id),
+                            "current_state": payment_order.state,
+                        },
+                    )
+
+        return ServiceResult.success(payment_order)
+
+
+# =============================================================================
+# Connected Account Handler
+# =============================================================================
+
+
+@register_handler("account.updated")
+def handle_account_updated(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle connected account updates from Stripe.
+
+    Called when Stripe sends account.updated webhook. This is fired
+    when a Connected Account's status changes, such as:
+    - Onboarding completion
+    - Capability changes (payouts_enabled, charges_enabled)
+    - Verification issues
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    account_id = data_object.get("id")
+
+    if not account_id:
+        logger.error(
+            "account.updated: Could not extract account_id",
+            extra={"stripe_event_id": webhook_event.stripe_event_id},
+        )
+        return ServiceResult.failure(
+            "Could not extract account_id from webhook",
+            error_code="INVALID_WEBHOOK_PAYLOAD",
+        )
+
+    # Extract account status fields
+    payouts_enabled = data_object.get("payouts_enabled", False)
+    charges_enabled = data_object.get("charges_enabled", False)
+    requirements = data_object.get("requirements", {})
+    currently_due = requirements.get("currently_due", [])
+    past_due = requirements.get("past_due", [])
+    disabled_reason = requirements.get("disabled_reason")
+
+    logger.info(
+        "Processing account.updated",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "account_id": account_id,
+            "payouts_enabled": payouts_enabled,
+            "charges_enabled": charges_enabled,
+            "requirements_due": len(currently_due) + len(past_due),
+        },
+    )
+
+    with transaction.atomic():
+        # Look up ConnectedAccount (no select_for_update since we use optimistic locking)
+        connected_account = ConnectedAccount.objects.filter(
+            stripe_account_id=account_id
+        ).first()
+
+        if not connected_account:
+            # This account is not in our system - could be legitimate
+            logger.info(
+                "ConnectedAccount not found, may be external account",
+                extra={
+                    "account_id": account_id,
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                },
+            )
+            return ServiceResult.success(None)
+
+        # Update account status
+        connected_account.payouts_enabled = payouts_enabled
+        connected_account.charges_enabled = charges_enabled
+
+        # Determine onboarding status based on requirements
+        if disabled_reason:
+            # Account has issues - mark as rejected
+            connected_account.onboarding_status = OnboardingStatus.REJECTED
+        elif not currently_due and not past_due:
+            # No requirements pending - onboarding complete
+            connected_account.onboarding_status = OnboardingStatus.COMPLETE
+        else:
+            # Still has requirements - in progress
+            connected_account.onboarding_status = OnboardingStatus.IN_PROGRESS
+
+        connected_account.save()
+
+        logger.info(
+            "ConnectedAccount updated",
+            extra={
+                "connected_account_id": str(connected_account.id),
+                "onboarding_status": connected_account.onboarding_status,
+                "payouts_enabled": connected_account.payouts_enabled,
+                "charges_enabled": connected_account.charges_enabled,
+            },
+        )
+
+        return ServiceResult.success(connected_account)

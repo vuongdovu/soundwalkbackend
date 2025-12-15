@@ -215,8 +215,25 @@ class TestPayoutTransitions:
 
         assert scheduled_payout.state == PayoutState.PROCESSING
 
+    def test_processing_to_scheduled(self, db, processing_payout):
+        """Should transition from processing to scheduled (via webhook)."""
+        processing_payout.mark_scheduled()
+        processing_payout.save()
+
+        assert processing_payout.state == PayoutState.SCHEDULED
+
     def test_processing_to_paid(self, db, processing_payout):
         """Should transition from processing to paid."""
+        processing_payout.complete()
+        processing_payout.save()
+
+        assert processing_payout.state == PayoutState.PAID
+        assert processing_payout.paid_at is not None
+
+    def test_scheduled_to_paid(self, db, processing_payout):
+        """Should transition from scheduled to paid (via webhook)."""
+        processing_payout.mark_scheduled()
+        processing_payout.save()
         processing_payout.complete()
         processing_payout.save()
 
@@ -231,6 +248,17 @@ class TestPayoutTransitions:
         assert processing_payout.state == PayoutState.FAILED
         assert processing_payout.failed_at is not None
         assert processing_payout.failure_reason == "Account suspended"
+
+    def test_scheduled_to_failed(self, db, processing_payout):
+        """Should transition from scheduled to failed (via webhook)."""
+        processing_payout.mark_scheduled()
+        processing_payout.save()
+        processing_payout.fail(reason="Transfer rejected")
+        processing_payout.save()
+
+        assert processing_payout.state == PayoutState.FAILED
+        assert processing_payout.failed_at is not None
+        assert processing_payout.failure_reason == "Transfer rejected"
 
     def test_failed_to_pending_retry(self, db, failed_payout):
         """Should allow retry from failed to pending."""
@@ -250,15 +278,31 @@ class TestPayoutTransitions:
         with pytest.raises(TransitionNotAllowed):
             pending_payout.complete()
 
-    def test_scheduled_cannot_complete(self, db, scheduled_payout):
-        """Cannot complete from scheduled state."""
+    def test_pending_cannot_mark_scheduled(self, db, pending_payout):
+        """Cannot mark scheduled from pending state (must process first)."""
         with pytest.raises(TransitionNotAllowed):
-            scheduled_payout.complete()
+            pending_payout.mark_scheduled()
+
+    def test_scheduled_cannot_mark_scheduled(self, db, scheduled_payout):
+        """Cannot mark scheduled from already scheduled state."""
+        # First transition to processing, then to scheduled
+        scheduled_payout.process()
+        scheduled_payout.save()
+        scheduled_payout.mark_scheduled()
+        scheduled_payout.save()
+        # Now try to mark_scheduled again - should fail
+        with pytest.raises(TransitionNotAllowed):
+            scheduled_payout.mark_scheduled()
 
     def test_paid_cannot_transition(self, db, paid_payout):
         """Cannot transition from paid state (terminal)."""
         with pytest.raises(TransitionNotAllowed):
             paid_payout.fail()
+
+    def test_paid_cannot_mark_scheduled(self, db, paid_payout):
+        """Cannot mark scheduled from paid state."""
+        with pytest.raises(TransitionNotAllowed):
+            paid_payout.mark_scheduled()
 
 
 # =============================================================================

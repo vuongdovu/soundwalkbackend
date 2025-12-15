@@ -10,9 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from authentication.models import User
-from payments.models import PaymentOrder, WebhookEvent
+from authentication.models import Profile, User
+from payments.models import ConnectedAccount, PaymentOrder, Payout, WebhookEvent
 from payments.state_machines import (
+    OnboardingStatus,
     PaymentStrategyType,
     WebhookEventStatus,
 )
@@ -326,3 +327,130 @@ def mock_ledger_service():
     ) as mock:
         mock.return_value = None  # Method doesn't return anything
         yield mock
+
+
+# =============================================================================
+# Profile and Connected Account Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def test_profile(db, test_user):
+    """Create a profile for test user."""
+    profile, _ = Profile.objects.get_or_create(user=test_user)
+    return profile
+
+
+@pytest.fixture
+def connected_account_fixture(db, test_profile):
+    """Create a connected account for testing."""
+    return ConnectedAccount.objects.create(
+        profile=test_profile,
+        stripe_account_id="acct_test_webhook_123",
+        onboarding_status=OnboardingStatus.COMPLETE,
+        payouts_enabled=True,
+        charges_enabled=True,
+    )
+
+
+# =============================================================================
+# Settled Payment Order Fixture
+# =============================================================================
+
+
+@pytest.fixture
+def settled_payment_order(db, test_user, mock_ledger_service):
+    """Create a settled payment order for refund tests."""
+    order = PaymentOrder.objects.create(
+        payer=test_user,
+        amount_cents=10000,
+        currency="usd",
+        strategy_type=PaymentStrategyType.DIRECT,
+        stripe_payment_intent_id="pi_test_settled_for_refund_123",
+    )
+    order.submit()
+    order.save()
+    order.process()
+    order.save()
+    order.capture()
+    order.save()
+    order.settle_from_captured()
+    order.save()
+    return order
+
+
+# =============================================================================
+# Payout Fixtures for Transfer Handler Tests
+# =============================================================================
+
+
+@pytest.fixture
+def processing_payout_with_transfer_id(
+    db, pending_payment_order, connected_account_fixture
+):
+    """Create a processing payout with stripe_transfer_id set."""
+    payout = Payout.objects.create(
+        payment_order=pending_payment_order,
+        connected_account=connected_account_fixture,
+        amount_cents=9000,
+        currency="usd",
+        stripe_transfer_id="tr_test_processing_123",
+    )
+    payout.process()
+    payout.save()
+    return payout
+
+
+@pytest.fixture
+def scheduled_payout_with_transfer_id(
+    db, pending_payment_order, connected_account_fixture
+):
+    """Create a scheduled payout with stripe_transfer_id set."""
+    payout = Payout.objects.create(
+        payment_order=pending_payment_order,
+        connected_account=connected_account_fixture,
+        amount_cents=9000,
+        currency="usd",
+        stripe_transfer_id="tr_test_scheduled_123",
+    )
+    payout.process()
+    payout.save()
+    payout.mark_scheduled()
+    payout.save()
+    return payout
+
+
+@pytest.fixture
+def paid_payout_with_transfer_id(db, pending_payment_order, connected_account_fixture):
+    """Create a paid payout with stripe_transfer_id set."""
+    payout = Payout.objects.create(
+        payment_order=pending_payment_order,
+        connected_account=connected_account_fixture,
+        amount_cents=9000,
+        currency="usd",
+        stripe_transfer_id="tr_test_paid_123",
+    )
+    payout.process()
+    payout.save()
+    payout.complete()
+    payout.save()
+    return payout
+
+
+@pytest.fixture
+def failed_payout_with_transfer_id(
+    db, pending_payment_order, connected_account_fixture
+):
+    """Create a failed payout with stripe_transfer_id set."""
+    payout = Payout.objects.create(
+        payment_order=pending_payment_order,
+        connected_account=connected_account_fixture,
+        amount_cents=9000,
+        currency="usd",
+        stripe_transfer_id="tr_test_failed_123",
+    )
+    payout.process()
+    payout.save()
+    payout.fail(reason="Initial failure for test")
+    payout.save()
+    return payout
