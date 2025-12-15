@@ -249,8 +249,8 @@ class ConversationService(BaseService):
                     conversation=conversation,
                     event=SystemMessageEvent.PARTICIPANT_ADDED,
                     data={
-                        "user_id": member.id,
-                        "added_by_id": creator.id,
+                        "user_id": str(member.id),
+                        "added_by_id": str(creator.id),
                     },
                 )
 
@@ -331,7 +331,7 @@ class ConversationService(BaseService):
                 data={
                     "old_title": old_title,
                     "new_title": new_title,
-                    "changed_by_id": user.id,
+                    "changed_by_id": str(user.id),
                 },
             )
 
@@ -505,8 +505,8 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.PARTICIPANT_ADDED,
                 data={
-                    "user_id": user_to_add.id,
-                    "added_by_id": added_by.id,
+                    "user_id": str(user_to_add.id),
+                    "added_by_id": str(added_by.id),
                 },
             )
 
@@ -623,8 +623,8 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.PARTICIPANT_REMOVED,
                 data={
-                    "user_id": user_to_remove.id,
-                    "removed_by_id": removed_by.id,
+                    "user_id": str(user_to_remove.id),
+                    "removed_by_id": str(removed_by.id),
                     "reason": "removed",
                 },
             )
@@ -700,7 +700,7 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.PARTICIPANT_REMOVED,
                 data={
-                    "user_id": user.id,
+                    "user_id": str(user.id),
                     "removed_by_id": None,
                     "reason": "left",
                 },
@@ -833,10 +833,10 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.ROLE_CHANGED,
                 data={
-                    "user_id": user_to_change.id,
+                    "user_id": str(user_to_change.id),
                     "old_role": old_role,
                     "new_role": new_role,
-                    "changed_by_id": changed_by.id,
+                    "changed_by_id": str(changed_by.id),
                 },
             )
 
@@ -927,8 +927,8 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.OWNERSHIP_TRANSFERRED,
                 data={
-                    "from_user_id": current_owner.id,
-                    "to_user_id": new_owner.id,
+                    "from_user_id": str(current_owner.id),
+                    "to_user_id": str(new_owner.id),
                     "reason": "manual",
                 },
             )
@@ -985,8 +985,8 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.OWNERSHIP_TRANSFERRED,
                 data={
-                    "from_user_id": departing_owner.id,
-                    "to_user_id": admin_candidate.user.id,
+                    "from_user_id": str(departing_owner.id),
+                    "to_user_id": str(admin_candidate.user.id),
                     "reason": "departure",
                 },
             )
@@ -1007,8 +1007,8 @@ class ParticipantService(BaseService):
                 conversation=conversation,
                 event=SystemMessageEvent.OWNERSHIP_TRANSFERRED,
                 data={
-                    "from_user_id": departing_owner.id,
-                    "to_user_id": member_candidate.user.id,
+                    "from_user_id": str(departing_owner.id),
+                    "to_user_id": str(member_candidate.user.id),
                     "reason": "departure",
                 },
             )

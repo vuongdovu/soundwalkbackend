@@ -154,7 +154,7 @@ class TestUserSerializer:
         for the user to make subsequent API calls.
         """
         serializer = UserSerializer(user)
-        assert serializer.data["id"] == user.id
+        assert serializer.data["id"] == str(user.id)
 
     def test_serializes_email(self, user):
         """
@@ -338,7 +338,7 @@ class TestProfileSerializer:
         for frontend state management and API calls.
         """
         serializer = ProfileSerializer(user.profile)
-        assert serializer.data["user_id"] == user.id
+        assert serializer.data["user_id"] == str(user.id)
 
     def test_serializes_user_email(self, user):
         """

@@ -30,6 +30,7 @@ Design Decisions:
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING
 
 from django.contrib.auth import get_user_model
@@ -254,7 +255,7 @@ class ParticipantCreateSerializer(serializers.Serializer):
     Prevents assigning OWNER role through this endpoint.
     """
 
-    user_id = serializers.IntegerField(help_text="User ID to add to conversation")
+    user_id = serializers.UUIDField(help_text="User ID to add to conversation")
     role = serializers.ChoiceField(
         choices=[
             (ParticipantRole.ADMIN, "Admin"),
@@ -264,7 +265,7 @@ class ParticipantCreateSerializer(serializers.Serializer):
         help_text="Role for the new participant (admin or member)",
     )
 
-    def validate_user_id(self, value: int) -> int:
+    def validate_user_id(self, value) -> "uuid.UUID":
         """Ensure user exists and is active."""
         try:
             User.objects.get(id=value, is_active=True)
@@ -469,7 +470,7 @@ class ConversationCreateSerializer(serializers.Serializer):
         help_text="Type of conversation to create",
     )
     participant_ids = serializers.ListField(
-        child=serializers.IntegerField(),
+        child=serializers.UUIDField(),
         min_length=1,
         help_text="List of user IDs to include in conversation",
     )

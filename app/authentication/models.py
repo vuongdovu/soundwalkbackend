@@ -19,6 +19,7 @@ Security:
 """
 
 import re
+import uuid
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.conf import settings
@@ -112,6 +113,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     OAuth provider tracking is handled by LinkedAccount.
 
     Fields:
+        id: UUID primary key (non-enumerable, distributed-system friendly)
         email: Primary identifier, unique, used for login
         email_verified: Whether the user's email has been verified
         is_active: Whether the user account is active
@@ -132,6 +134,14 @@ class User(AbstractBaseUser, PermissionsMixin):
             password='adminpassword'
         )
     """
+
+    # UUID primary key - consistent with payment models, non-enumerable
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        help_text="Unique identifier for this user",
+    )
 
     # Primary identifier (replaces username)
     email = models.EmailField(

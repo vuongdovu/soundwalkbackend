@@ -164,7 +164,8 @@ class NotificationService(BaseService):
         object_id = None
         if source_object is not None:
             content_type = ContentType.objects.get_for_model(source_object)
-            object_id = source_object.pk
+            # Convert PK to string to support both UUID and integer PKs
+            object_id = str(source_object.pk)
 
         # Create notification in transaction
         with transaction.atomic():

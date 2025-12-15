@@ -369,7 +369,7 @@ class TestNotification:
             recipient=user,
             title="With Source",
             content_type=content_type,
-            object_id=user.pk,
+            object_id=str(user.pk),
         )
 
         assert notification.source_object == user
@@ -382,7 +382,7 @@ class TestNotification:
         # Create a user to be the source object
         source_user = UserFactory(email_verified=True)
         content_type = ContentType.objects.get_for_model(source_user)
-        source_pk = source_user.pk
+        source_pk = str(source_user.pk)
 
         notification = Notification.objects.create(
             notification_type=notification_type,

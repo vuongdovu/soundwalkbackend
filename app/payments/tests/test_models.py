@@ -42,18 +42,18 @@ class TestConnectedAccountModel:
         """Should create account with required fields."""
         account = ConnectedAccount.objects.create(
             profile=profile,
-            stripe_account_id="acct_test123",
+            stripe_account_id=f"acct_test_{uuid.uuid4().hex[:8]}",
         )
 
         assert account.pk is not None
         assert isinstance(account.pk, uuid.UUID)
-        assert account.stripe_account_id == "acct_test123"
+        assert account.stripe_account_id.startswith("acct_test_")
 
-    def test_default_values(self, db, profile):
+    def test_default_values(self, db, another_profile):
         """Should have correct default values."""
         account = ConnectedAccount.objects.create(
-            profile=profile,
-            stripe_account_id="acct_test123",
+            profile=another_profile,
+            stripe_account_id=f"acct_test_{uuid.uuid4().hex[:8]}",
         )
 
         assert account.onboarding_status == OnboardingStatus.NOT_STARTED

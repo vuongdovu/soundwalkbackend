@@ -139,7 +139,7 @@ class TestNotificationServiceCreate:
         notification = result.data
         assert notification.source_object == user
         assert notification.content_type == ContentType.objects.get_for_model(user)
-        assert notification.object_id == user.pk
+        assert notification.object_id == str(user.pk)
 
     def test_stores_data_json(self, db, notification_type, user):
         """Stores arbitrary JSON data in notification."""

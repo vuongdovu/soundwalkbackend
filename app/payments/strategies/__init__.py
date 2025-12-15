@@ -16,6 +16,23 @@ Usage:
             currency='usd',
         )
     )
+
+    # Create an escrow payment (requires recipient_profile_id in metadata)
+    from payments.strategies import EscrowPaymentStrategy
+
+    strategy = EscrowPaymentStrategy()
+    result = strategy.create_payment(
+        CreatePaymentParams(
+            payer=user,
+            amount_cents=10000,
+            currency='usd',
+            reference_id=session.id,
+            reference_type='session',
+            metadata={
+                'recipient_profile_id': str(mentor.profile.id),
+            },
+        )
+    )
 """
 
 from payments.strategies.base import (
@@ -24,10 +41,12 @@ from payments.strategies.base import (
     PaymentStrategy,
 )
 from payments.strategies.direct import DirectPaymentStrategy
+from payments.strategies.escrow import EscrowPaymentStrategy
 
 __all__ = [
     "CreatePaymentParams",
     "DirectPaymentStrategy",
+    "EscrowPaymentStrategy",
     "PaymentResult",
     "PaymentStrategy",
 ]

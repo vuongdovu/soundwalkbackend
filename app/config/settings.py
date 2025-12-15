@@ -177,6 +177,11 @@ SESSION_CACHE_ALIAS = "default"
 # Custom user model (MUST be set before first migration)
 AUTH_USER_MODEL = "authentication.User"
 
+# Custom migrations for third-party apps that don't support UUID User PK
+MIGRATION_MODULES = {
+    "authtoken": "config.authtoken_migrations",
+}
+
 # Authentication backends (allauth for social, ModelBackend for admin)
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
@@ -371,6 +376,23 @@ STRIPE_MAX_RETRIES = env.int("STRIPE_MAX_RETRIES", default=3)
 # =============================================================================
 # Platform fee percentage taken from each payment (default: 15%)
 PLATFORM_FEE_PERCENT = env.int("PLATFORM_FEE_PERCENT", default=15)
+
+# =============================================================================
+# Escrow Configuration
+# =============================================================================
+# Default hold duration for escrow payments (in days)
+# Funds are held until service completion or expiration, whichever comes first
+ESCROW_DEFAULT_HOLD_DURATION_DAYS = env.int(
+    "ESCROW_DEFAULT_HOLD_DURATION_DAYS",
+    default=42,  # 6 weeks
+)
+
+# Maximum hold duration allowed (in days)
+# Prevents indefinite holds; expired holds auto-release to recipient
+ESCROW_MAX_HOLD_DURATION_DAYS = env.int(
+    "ESCROW_MAX_HOLD_DURATION_DAYS",
+    default=90,
+)
 
 # =============================================================================
 # Internationalization

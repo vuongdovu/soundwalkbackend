@@ -89,19 +89,19 @@ class SystemMessageEvent:
             data: {"title": str}
 
         PARTICIPANT_ADDED: User was added to group
-            data: {"user_id": int, "added_by_id": int}
+            data: {"user_id": str, "added_by_id": str}
 
         PARTICIPANT_REMOVED: User left or was removed from group
-            data: {"user_id": int, "removed_by_id": int|None, "reason": "left"|"removed"}
+            data: {"user_id": str, "removed_by_id": str|None, "reason": "left"|"removed"}
 
         ROLE_CHANGED: User's role was changed
-            data: {"user_id": int, "old_role": str, "new_role": str, "changed_by_id": int}
+            data: {"user_id": str, "old_role": str, "new_role": str, "changed_by_id": str}
 
         OWNERSHIP_TRANSFERRED: Group ownership was transferred
-            data: {"from_user_id": int, "to_user_id": int, "reason": "manual"|"departure"}
+            data: {"from_user_id": str, "to_user_id": str, "reason": "manual"|"departure"}
 
         TITLE_CHANGED: Group title was changed
-            data: {"old_title": str, "new_title": str, "changed_by_id": int}
+            data: {"old_title": str, "new_title": str, "changed_by_id": str}
     """
 
     GROUP_CREATED = "group_created"

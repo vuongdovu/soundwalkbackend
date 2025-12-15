@@ -236,10 +236,11 @@ class Notification(BaseModel):
         help_text="Content type of source object",
     )
 
-    object_id = models.PositiveIntegerField(
+    object_id = models.CharField(
+        max_length=36,
         null=True,
         blank=True,
-        help_text="ID of source object",
+        help_text="ID of source object (supports UUID and integer PKs)",
     )
 
     source_object = GenericForeignKey("content_type", "object_id")

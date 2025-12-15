@@ -706,7 +706,7 @@ class TestParticipantServiceAddParticipant:
         for msg in system_msgs:
             data = json.loads(msg.content)
             if data.get("event") == SystemMessageEvent.PARTICIPANT_ADDED:
-                if data["data"].get("user_id") == new_user.id:
+                if data["data"].get("user_id") == str(new_user.id):
                     added_msg = msg
                     break
 
