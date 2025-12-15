@@ -170,5 +170,18 @@
       "Bash(pip3 index:*)"
     ],
     "deny": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json\nimport sys\nimport subprocess\n\ndata = json.load(sys.stdin)\ncommand = data.get('tool_input', {}).get('command', '')\n\n# Only check git commit commands\nif 'git commit' not in command:\n    sys.exit(0)\n\n# Get files changed in the last commit\ntry:\n    result = subprocess.run(\n        ['git', 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'],\n        capture_output=True,\n        text=True,\n        timeout=5\n    )\n    files = result.stdout.strip().split('\\n') if result.stdout.strip() else []\nexcept:\n    sys.exit(0)\n\n# Architecture-relevant files\narch_files = ['models.py', 'views.py', 'urls.py', 'serializers.py', 'signals.py', 'tasks.py', 'admin.py', 'permissions.py', 'managers.py', 'middleware.py']\n\n# Check if any architecture-relevant files were changed\nchanged_arch_files = [f for f in files if any(f.endswith(af) for af in arch_files)]\n\nif changed_arch_files:\n    print(f'Architecture-relevant files changed: {changed_arch_files}')\n    print('Consider running: /doc')\n\""
+          }
+        ]
+      }
+    ]
   }
 }
