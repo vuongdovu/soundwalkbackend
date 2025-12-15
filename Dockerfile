@@ -27,12 +27,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # - libpq-dev: PostgreSQL client library headers (for psycopg)
 # - python3-dev: Python headers for C extensions
 # - libjpeg-dev, zlib1g-dev: Image processing headers for Pillow
+# - libwebp-dev: WebP image format headers for Pillow
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     python3-dev \
     libjpeg-dev \
     zlib1g-dev \
+    libwebp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Create and activate virtual environment
@@ -64,11 +66,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # - libpq5: PostgreSQL client library (runtime only, not -dev headers)
 # - curl: For health checks
 # - libjpeg62-turbo, zlib1g: Image processing runtime libraries for Pillow
+# - libwebp7, libwebpmux3, libwebpdemux2: WebP image format runtime libraries
+# - libmagic1: Magic number detection for python-magic (MIME type detection)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
     libjpeg62-turbo \
     zlib1g \
+    libwebp7 \
+    libwebpmux3 \
+    libwebpdemux2 \
+    libmagic1 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

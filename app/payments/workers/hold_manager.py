@@ -2,7 +2,7 @@
 Hold manager worker for processing expired escrow holds.
 
 This module provides Celery tasks for automatic processing of expired
-FundHolds according to the auto-release policy (release to mentor).
+FundHolds according to the auto-release policy (release to recipient).
 
 Tasks:
 - process_expired_holds: Periodic task that scans for and queues expired holds

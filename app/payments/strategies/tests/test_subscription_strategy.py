@@ -42,32 +42,32 @@ def test_user(db):
 
 
 @pytest.fixture
-def mentor_user(db):
-    """Create a mentor user who will receive subscription payments."""
+def recipient_user(db):
+    """Create a recipient user who will receive subscription payments."""
     from authentication.models import User
 
     return User.objects.create_user(
-        email="mentor@example.com",
+        email="recipient@example.com",
         password="testpass123",
     )
 
 
 @pytest.fixture
-def mentor_profile(db, mentor_user):
-    """Create a profile for the mentor."""
-    profile, _ = Profile.objects.get_or_create(user=mentor_user)
+def recipient_profile(db, recipient_user):
+    """Create a profile for the recipient."""
+    profile, _ = Profile.objects.get_or_create(user=recipient_user)
     return profile
 
 
 @pytest.fixture
-def connected_account(db, mentor_profile):
-    """Create a connected account for the mentor with completed onboarding."""
+def connected_account(db, recipient_profile):
+    """Create a connected account for the recipient with completed onboarding."""
     from payments.models import ConnectedAccount
     from payments.state_machines import OnboardingStatus
 
     return ConnectedAccount.objects.create(
-        profile=mentor_profile,
-        stripe_account_id="acct_test_mentor_123",
+        profile=recipient_profile,
+        stripe_account_id="acct_test_recipient_123",
         onboarding_status=OnboardingStatus.COMPLETE,
         payouts_enabled=True,
         charges_enabled=True,
@@ -177,13 +177,13 @@ def invoice_payment_failed_event_data():
 class TestCreateSubscriptionParams:
     """Tests for CreateSubscriptionParams validation."""
 
-    def test_valid_params(self, test_user, mentor_profile):
+    def test_valid_params(self, test_user, recipient_profile):
         """Should create params with valid values."""
         from payments.strategies.subscription import CreateSubscriptionParams
 
         params = CreateSubscriptionParams(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             price_id="price_test_123",
             amount_cents=10000,
             currency="usd",
@@ -191,30 +191,30 @@ class TestCreateSubscriptionParams:
         )
 
         assert params.payer == test_user
-        assert params.recipient_profile_id == mentor_profile.pk
+        assert params.recipient_profile_id == recipient_profile.pk
         assert params.price_id == "price_test_123"
         assert params.amount_cents == 10000
 
-    def test_amount_must_be_positive(self, test_user, mentor_profile):
+    def test_amount_must_be_positive(self, test_user, recipient_profile):
         """Should raise ValueError for zero or negative amount."""
         from payments.strategies.subscription import CreateSubscriptionParams
 
         with pytest.raises(ValueError, match="amount_cents must be positive"):
             CreateSubscriptionParams(
                 payer=test_user,
-                recipient_profile_id=mentor_profile.pk,
+                recipient_profile_id=recipient_profile.pk,
                 price_id="price_test_123",
                 amount_cents=0,
             )
 
-    def test_price_id_required(self, test_user, mentor_profile):
+    def test_price_id_required(self, test_user, recipient_profile):
         """Should raise ValueError for missing price_id."""
         from payments.strategies.subscription import CreateSubscriptionParams
 
         with pytest.raises(ValueError, match="price_id is required"):
             CreateSubscriptionParams(
                 payer=test_user,
-                recipient_profile_id=mentor_profile.pk,
+                recipient_profile_id=recipient_profile.pk,
                 price_id="",
                 amount_cents=10000,
             )
@@ -241,7 +241,7 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
     """Tests for SubscriptionPaymentStrategy.create_subscription."""
 
     def test_create_subscription_creates_stripe_subscription(
-        self, test_user, mentor_profile, connected_account, mock_stripe_adapter
+        self, test_user, recipient_profile, connected_account, mock_stripe_adapter
     ):
         """Should create a Stripe subscription with correct parameters."""
         from payments.strategies.subscription import (
@@ -253,7 +253,7 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
 
         params = CreateSubscriptionParams(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             price_id="price_test_123",
             amount_cents=10000,
             currency="usd",
@@ -274,7 +274,7 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
             assert len(call_args.args) > 0 or len(call_args.kwargs) > 0
 
     def test_create_subscription_creates_local_subscription_pending(
-        self, test_user, mentor_profile, connected_account, mock_stripe_adapter
+        self, test_user, recipient_profile, connected_account, mock_stripe_adapter
     ):
         """Should create local Subscription record in PENDING state."""
         from payments.state_machines import SubscriptionState
@@ -287,7 +287,7 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
 
         params = CreateSubscriptionParams(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             price_id="price_test_123",
             amount_cents=10000,
         )
@@ -300,12 +300,12 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
         # Verify local subscription
         subscription = result.data.subscription
         assert subscription.payer == test_user
-        assert subscription.recipient_profile_id == mentor_profile.pk
+        assert subscription.recipient_profile_id == recipient_profile.pk
         assert subscription.stripe_subscription_id == "sub_test_123"
         assert subscription.state == SubscriptionState.PENDING
 
     def test_create_subscription_returns_client_secret(
-        self, test_user, mentor_profile, connected_account, mock_stripe_adapter
+        self, test_user, recipient_profile, connected_account, mock_stripe_adapter
     ):
         """Should return client_secret for frontend payment completion."""
         from payments.strategies.subscription import (
@@ -326,7 +326,7 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
 
         params = CreateSubscriptionParams(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             price_id="price_test_123",
             amount_cents=10000,
         )
@@ -336,7 +336,7 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
         assert result.success is True
 
     def test_create_subscription_succeeds_without_connected_account(
-        self, test_user, mentor_profile, mock_stripe_adapter
+        self, test_user, recipient_profile, mock_stripe_adapter
     ):
         """
         Should succeed without connected account.
@@ -349,12 +349,12 @@ class TestSubscriptionPaymentStrategyCreateSubscription:
             SubscriptionPaymentStrategy,
         )
 
-        # No connected_account fixture - mentor has no payout destination yet
+        # No connected_account fixture - recipient has no payout destination yet
         strategy = SubscriptionPaymentStrategy(stripe_adapter=mock_stripe_adapter)
 
         params = CreateSubscriptionParams(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             price_id="price_test_123",
             amount_cents=10000,
         )
@@ -375,13 +375,13 @@ class TestSubscriptionPaymentStrategyHandleSuccess:
     """Tests for SubscriptionPaymentStrategy.handle_payment_succeeded."""
 
     @pytest.fixture
-    def subscription(self, db, test_user, mentor_profile):
+    def subscription(self, db, test_user, recipient_profile):
         """Create an active subscription for testing."""
         from payments.models import Subscription
 
         subscription = Subscription.objects.create(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -426,9 +426,9 @@ class TestSubscriptionPaymentStrategyHandleSuccess:
         assert result.data.captured_at is not None
 
     def test_handle_success_records_ledger_entries(
-        self, pending_renewal_order, invoice_paid_event_data, mentor_profile
+        self, pending_renewal_order, invoice_paid_event_data, recipient_profile
     ):
-        """Should create ledger entries for payment, fee, and mentor credit."""
+        """Should create ledger entries for payment, fee, and recipient credit."""
         from payments.strategies.subscription import SubscriptionPaymentStrategy
 
         strategy = SubscriptionPaymentStrategy()
@@ -445,7 +445,7 @@ class TestSubscriptionPaymentStrategyHandleSuccess:
             reference_id=pending_renewal_order.id,
         ).order_by("created_at")
 
-        # Should have 3 entries: received, fee, mentor credit
+        # Should have 3 entries: received, fee, recipient credit
         assert entries.count() == 3
 
         # Entry 1: Payment received (full amount into escrow)
@@ -459,12 +459,12 @@ class TestSubscriptionPaymentStrategyHandleSuccess:
         assert fee_entry.amount_cents == 1500  # 15% of 10000
 
         # Entry 3: Mentor credit (85%)
-        mentor_entry = entries[2]
-        assert mentor_entry.entry_type == EntryType.PAYMENT_RELEASED
-        assert mentor_entry.amount_cents == 8500  # 85% of 10000
+        recipient_entry = entries[2]
+        assert recipient_entry.entry_type == EntryType.PAYMENT_RELEASED
+        assert recipient_entry.amount_cents == 8500  # 85% of 10000
 
     def test_handle_success_first_payment_activates_subscription(
-        self, db, test_user, mentor_profile, invoice_paid_event_data
+        self, db, test_user, recipient_profile, invoice_paid_event_data
     ):
         """Should activate subscription on first successful payment."""
         from payments.models import Subscription
@@ -474,7 +474,7 @@ class TestSubscriptionPaymentStrategyHandleSuccess:
         # Create subscription in PENDING state
         subscription = Subscription.objects.create(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -546,13 +546,13 @@ class TestSubscriptionPaymentStrategyHandleFailure:
     """Tests for SubscriptionPaymentStrategy.handle_payment_failed."""
 
     @pytest.fixture
-    def active_subscription(self, db, test_user, mentor_profile):
+    def active_subscription(self, db, test_user, recipient_profile):
         """Create an active subscription for failure testing."""
         from payments.models import Subscription
 
         subscription = Subscription.objects.create(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -648,13 +648,13 @@ class TestSubscriptionCancellation:
     """Tests for subscription cancellation."""
 
     @pytest.fixture
-    def active_subscription(self, db, test_user, mentor_profile):
+    def active_subscription(self, db, test_user, recipient_profile):
         """Create an active subscription for cancellation testing."""
         from payments.models import Subscription
 
         subscription = Subscription.objects.create(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -721,13 +721,13 @@ class TestSubscriptionLedgerIdempotency:
     """Tests for ledger entry idempotency in subscription payments."""
 
     @pytest.fixture
-    def subscription(self, db, test_user, mentor_profile):
+    def subscription(self, db, test_user, recipient_profile):
         """Create an active subscription."""
         from payments.models import Subscription
 
         subscription = Subscription.objects.create(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -788,16 +788,16 @@ class TestSubscriptionLedgerIdempotency:
 
 
 class TestMentorBalanceAccumulation:
-    """Tests for mentor balance accumulation from subscription payments."""
+    """Tests for recipient balance accumulation from subscription payments."""
 
     @pytest.fixture
-    def subscription(self, db, test_user, mentor_profile, connected_account):
+    def subscription(self, db, test_user, recipient_profile, connected_account):
         """Create an active subscription with connected account."""
         from payments.models import Subscription
 
         subscription = Subscription.objects.create(
             payer=test_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -810,9 +810,9 @@ class TestMentorBalanceAccumulation:
         return subscription
 
     def test_multiple_renewals_accumulate_in_user_balance(
-        self, db, test_user, mentor_profile, subscription
+        self, db, test_user, recipient_profile, subscription
     ):
-        """Should accumulate mentor balance across multiple renewals."""
+        """Should accumulate recipient balance across multiple renewals."""
         from payments.ledger.services import LedgerService
         from payments.strategies.subscription import SubscriptionPaymentStrategy
 
@@ -847,15 +847,15 @@ class TestMentorBalanceAccumulation:
             result = strategy.handle_payment_succeeded(order, event_data)
             assert result.success is True
 
-        # Check mentor's accumulated balance
-        mentor_account = LedgerAccount.objects.filter(
+        # Check recipient's accumulated balance
+        recipient_account = LedgerAccount.objects.filter(
             type=AccountType.USER_BALANCE,
-            owner_id=mentor_profile.pk,
+            owner_id=recipient_profile.pk,
             currency="usd",
         ).first()
 
-        assert mentor_account is not None
-        balance = LedgerService.get_balance(mentor_account.id)
+        assert recipient_account is not None
+        balance = LedgerService.get_balance(recipient_account.id)
 
         # 3 payments * $85 each (85% after 15% fee) = $255
         assert balance.cents == 25500

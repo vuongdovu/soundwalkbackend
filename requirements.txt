@@ -58,9 +58,10 @@ django-cors-headers==4.6.0         # CORS handling for API
 whitenoise==6.8.2                  # Static file serving (fallback)
 
 # -----------------------------------------------------------------------------
-# Image Processing
+# Image Processing & File Handling
 # -----------------------------------------------------------------------------
 Pillow==11.0.0                     # Image processing (required for ImageField)
+python-magic==0.4.27               # Content-based MIME type detection (requires libmagic1)
 
 # -----------------------------------------------------------------------------
 # Payments

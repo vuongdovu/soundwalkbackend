@@ -8,8 +8,8 @@ This strategy implements the escrow payment flow:
 4. Webhook confirms success
 5. Funds are captured and HELD in escrow
 6. Service is delivered
-7. Funds are RELEASED to mentor (minus platform fee)
-8. Payout sent to mentor's connected account
+7. Funds are RELEASED to recipient (minus platform fee)
+8. Payout sent to recipient's connected account
 
 State Flow:
     DRAFT -> PENDING -> PROCESSING -> CAPTURED -> HELD -> RELEASED -> SETTLED
@@ -40,7 +40,7 @@ Usage:
             payer=customer,
             amount_cents=10000,
             metadata={
-                'recipient_profile_id': str(mentor.profile.id),
+                'recipient_profile_id': str(recipient.profile.id),
             },
         )
     )
@@ -97,7 +97,7 @@ class EscrowPaymentStrategy(PaymentStrategy):
 
     Escrow payments hold funds after capture until service completion
     is confirmed, at which point funds are released to the recipient
-    (mentor) minus the platform fee.
+    minus the platform fee.
 
     State Flow:
         DRAFT -> PENDING -> PROCESSING -> CAPTURED -> HELD -> RELEASED -> SETTLED
@@ -110,7 +110,7 @@ class EscrowPaymentStrategy(PaymentStrategy):
 
     Recipient Tracking:
         Escrow payments require a recipient_profile_id in the metadata.
-        This links the payment to the mentor who will receive funds upon
+        This links the payment to the recipient who will receive funds upon
         release.
 
     Dependency Injection:
@@ -589,7 +589,7 @@ class EscrowPaymentStrategy(PaymentStrategy):
         10. Save all changes atomically
 
         The Payout record will be picked up by the payout executor worker
-        to actually transfer funds to the mentor's connected account.
+        to actually transfer funds to the recipient's connected account.
 
         Args:
             payment_order: The PaymentOrder in HELD state

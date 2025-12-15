@@ -26,10 +26,10 @@ Usage:
             payer=user,
             amount_cents=10000,
             currency='usd',
-            reference_id=session.id,
-            reference_type='session',
+            reference_id=booking.id,
+            reference_type='booking',
             metadata={
-                'recipient_profile_id': str(mentor.profile.id),
+                'recipient_profile_id': str(recipient.profile.id),
             },
         )
     )

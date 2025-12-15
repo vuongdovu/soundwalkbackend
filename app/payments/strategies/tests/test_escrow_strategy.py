@@ -46,9 +46,9 @@ from payments.strategies.escrow import EscrowPaymentStrategy
 
 @pytest.fixture
 def recipient_user(db):
-    """Create a recipient user (mentor) for escrow payments."""
+    """Create a recipient user for escrow payments."""
     return User.objects.create_user(
-        email="mentor@example.com",
+        email="recipient@example.com",
         password="testpass123",
     )
 
@@ -63,7 +63,7 @@ def recipient_profile(db, recipient_user):
         user=recipient_user,
         defaults={
             "first_name": "Test",
-            "last_name": "Mentor",
+            "last_name": "Recipient",
         },
     )
     return profile
@@ -363,7 +363,7 @@ class TestEscrowPaymentStrategyCreatePayment:
             reference_type="session",
             metadata={
                 "recipient_profile_id": str(recipient_profile.pk),
-                "session_topic": "Python mentoring",
+                "session_topic": "Service booking",
             },
         )
 
@@ -373,7 +373,7 @@ class TestEscrowPaymentStrategyCreatePayment:
         order = result.data.payment_order
         assert order.reference_id == reference_id
         assert order.reference_type == "session"
-        assert order.metadata["session_topic"] == "Python mentoring"
+        assert order.metadata["session_topic"] == "Service booking"
 
     def test_create_payment_stripe_error(
         self, test_user, mock_stripe_adapter, recipient_profile

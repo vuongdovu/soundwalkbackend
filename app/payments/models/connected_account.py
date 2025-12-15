@@ -2,14 +2,14 @@
 ConnectedAccount model for Stripe Connect integration.
 
 This model represents a Stripe Connected Account that can receive payouts.
-Each mentor/service provider has a ConnectedAccount linked to their profile.
+Each recipient/service provider has a ConnectedAccount linked to their profile.
 
 Usage:
     from payments.models import ConnectedAccount
 
     # Create connected account for a profile
     account = ConnectedAccount.objects.create(
-        profile=mentor_profile,
+        profile=recipient_profile,
         stripe_account_id="acct_1234567890",
         onboarding_status=OnboardingStatus.IN_PROGRESS,
     )
@@ -45,7 +45,7 @@ class ConnectedAccount(UUIDPrimaryKeyMixin, BaseModel):
     onboarding status and payout eligibility.
 
     Fields:
-        profile: OneToOne link to the user's Profile (mentor)
+        profile: OneToOne link to the user's Profile
         stripe_account_id: Unique Stripe Account ID (acct_xxx)
         onboarding_status: Current state of Stripe Connect onboarding
         payouts_enabled: Whether Stripe has enabled payouts
@@ -57,8 +57,8 @@ class ConnectedAccount(UUIDPrimaryKeyMixin, BaseModel):
         is_ready_for_payouts: True if account can receive payouts
 
     Lifecycle:
-        1. Account created when mentor starts onboarding (NOT_STARTED)
-        2. Onboarding link sent to mentor (IN_PROGRESS)
+        1. Account created when recipient starts onboarding (NOT_STARTED)
+        2. Onboarding link sent to recipient (IN_PROGRESS)
         3. Stripe verifies information (IN_PROGRESS)
         4. Stripe enables account (COMPLETE)
         5. Can now receive payouts

@@ -119,7 +119,7 @@ class TestDirectPaymentStrategyCreatePayment:
             amount_cents=10000,
             reference_id=reference_id,
             reference_type="session",
-            metadata={"session_topic": "Python basics"},
+            metadata={"session_topic": "Service description"},
         )
 
         result = strategy.create_payment(params)
@@ -128,7 +128,7 @@ class TestDirectPaymentStrategyCreatePayment:
         order = result.data.payment_order
         assert order.reference_id == reference_id
         assert order.reference_type == "session"
-        assert order.metadata["session_topic"] == "Python basics"
+        assert order.metadata["session_topic"] == "Service description"
 
     def test_create_payment_stripe_call(self, test_user, mock_stripe_adapter):
         """Should call Stripe with correct parameters."""

@@ -39,7 +39,7 @@ services:
       - ./app:/app
       # Persistent storage for static and media files
       - static_volume:/app/staticfiles
-      - media_volume:/app/media
+      - media_volume:/app/uploads
       # Persistent logs directory - survives container restarts
       - ./logs:/app/logs
     depends_on:
@@ -127,7 +127,7 @@ services:
       - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
       # Static and media files served directly by nginx
       - static_volume:/var/www/static:ro
-      - media_volume:/var/www/media:ro
+      - media_volume:/var/www/uploads:ro
       # Persistent nginx logs - access.log and error.log
       - ./logs:/var/log/nginx
     depends_on:
@@ -163,6 +163,8 @@ services:
     volumes:
       # Mount source code for development
       - ./app:/app
+      # Media files - shared with web container for processing uploaded files
+      - media_volume:/app/uploads
       # Persistent logs directory - survives container restarts
       - ./logs:/app/logs
     depends_on:

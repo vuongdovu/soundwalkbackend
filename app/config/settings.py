@@ -93,6 +93,7 @@ INSTALLED_APPS = [
     "chat",
     "notifications",
     "payments",
+    "media",
 ]
 
 MIDDLEWARE = [
@@ -418,7 +419,7 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 # Media Files (User Uploads)
 # =============================================================================
 MEDIA_URL = env("MEDIA_URL", default="/media/")
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = BASE_DIR / "uploads"  # Storage dir, not app name
 
 # =============================================================================
 # Default Primary Key Field Type

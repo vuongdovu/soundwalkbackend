@@ -41,27 +41,27 @@ def subscriber_user(db):
 
 
 @pytest.fixture
-def mentor_user(db):
-    """Create a mentor user who receives subscription payments."""
+def recipient_user(db):
+    """Create a recipient user who receives subscription payments."""
     return User.objects.create_user(
-        email="mentor@example.com",
+        email="recipient@example.com",
         password="testpass123",
     )
 
 
 @pytest.fixture
-def mentor_profile(db, mentor_user):
-    """Create a profile for the mentor."""
-    profile, _ = Profile.objects.get_or_create(user=mentor_user)
+def recipient_profile(db, recipient_user):
+    """Create a profile for the recipient."""
+    profile, _ = Profile.objects.get_or_create(user=recipient_user)
     return profile
 
 
 @pytest.fixture
-def connected_account(db, mentor_profile):
-    """Create a connected account for the mentor with completed onboarding."""
+def connected_account(db, recipient_profile):
+    """Create a connected account for the recipient with completed onboarding."""
     return ConnectedAccount.objects.create(
-        profile=mentor_profile,
-        stripe_account_id="acct_test_mentor_sub_123",
+        profile=recipient_profile,
+        stripe_account_id="acct_test_recipient_sub_123",
         onboarding_status=OnboardingStatus.COMPLETE,
         payouts_enabled=True,
         charges_enabled=True,
@@ -74,13 +74,13 @@ def connected_account(db, mentor_profile):
 
 
 @pytest.fixture
-def pending_subscription(db, subscriber_user, mentor_profile):
+def pending_subscription(db, subscriber_user, recipient_profile):
     """Create a subscription in PENDING state (awaiting first payment)."""
     from payments.models import Subscription
 
     return Subscription.objects.create(
         payer=subscriber_user,
-        recipient_profile_id=mentor_profile.pk,
+        recipient_profile_id=recipient_profile.pk,
         stripe_subscription_id="sub_test_pending_123",
         stripe_customer_id="cus_test_subscriber_123",
         stripe_price_id="price_test_monthly_123",
@@ -93,13 +93,13 @@ def pending_subscription(db, subscriber_user, mentor_profile):
 
 
 @pytest.fixture
-def active_subscription(db, subscriber_user, mentor_profile):
+def active_subscription(db, subscriber_user, recipient_profile):
     """Create a subscription in ACTIVE state."""
     from payments.models import Subscription
 
     subscription = Subscription.objects.create(
         payer=subscriber_user,
-        recipient_profile_id=mentor_profile.pk,
+        recipient_profile_id=recipient_profile.pk,
         stripe_subscription_id="sub_test_active_123",
         stripe_customer_id="cus_test_subscriber_123",
         stripe_price_id="price_test_monthly_123",
@@ -115,13 +115,13 @@ def active_subscription(db, subscriber_user, mentor_profile):
 
 
 @pytest.fixture
-def past_due_subscription(db, subscriber_user, mentor_profile):
+def past_due_subscription(db, subscriber_user, recipient_profile):
     """Create a subscription in PAST_DUE state."""
     from payments.models import Subscription
 
     subscription = Subscription.objects.create(
         payer=subscriber_user,
-        recipient_profile_id=mentor_profile.pk,
+        recipient_profile_id=recipient_profile.pk,
         stripe_subscription_id="sub_test_past_due_123",
         stripe_customer_id="cus_test_subscriber_123",
         stripe_price_id="price_test_monthly_123",
@@ -966,7 +966,7 @@ class TestHandleSubscriptionDeleted:
         subscription = Subscription.objects.get(id=past_due_subscription.id)
         assert subscription.state == SubscriptionState.CANCELLED
 
-    def test_idempotent_already_cancelled(self, db, subscriber_user, mentor_profile):
+    def test_idempotent_already_cancelled(self, db, subscriber_user, recipient_profile):
         """Should be idempotent for already cancelled subscriptions."""
         from payments.models import Subscription
         from payments.state_machines import SubscriptionState
@@ -975,7 +975,7 @@ class TestHandleSubscriptionDeleted:
         # Create already cancelled subscription
         subscription = Subscription.objects.create(
             payer=subscriber_user,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             stripe_subscription_id="sub_test_already_cancelled_123",
             stripe_customer_id="cus_test_123",
             stripe_price_id="price_test_123",
@@ -1131,7 +1131,7 @@ class TestSubscriptionLedgerEntries:
             reference_id=order.id,
         ).order_by("created_at")
 
-        # Should have 3 entries: received, fee, mentor credit
+        # Should have 3 entries: received, fee, recipient credit
         assert entries.count() == 3
 
         # Entry 1: Payment received (full amount)
@@ -1145,9 +1145,9 @@ class TestSubscriptionLedgerEntries:
         assert fee_entry.amount_cents == 1500
 
         # Entry 3: Mentor credit (85%)
-        mentor_entry = entries[2]
-        assert mentor_entry.entry_type == EntryType.PAYMENT_RELEASED
-        assert mentor_entry.amount_cents == 8500
+        recipient_entry = entries[2]
+        assert recipient_entry.entry_type == EntryType.PAYMENT_RELEASED
+        assert recipient_entry.amount_cents == 8500
 
     def test_ledger_entries_idempotent_on_duplicate_webhook(
         self, db, active_subscription, invoice_paid_payload, connected_account

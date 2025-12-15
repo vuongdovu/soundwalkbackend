@@ -29,7 +29,7 @@ def create_periodic_task(apps, schema_editor):
             "enabled": True,
             "description": (
                 "Scans for expired FundHolds and queues release tasks. "
-                "Auto-releases escrowed funds to mentors when holds expire."
+                "Auto-releases escrowed funds to recipients when holds expire."
             ),
         },
     )

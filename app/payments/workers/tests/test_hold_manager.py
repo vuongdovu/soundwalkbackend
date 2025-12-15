@@ -2,7 +2,7 @@
 Tests for hold_manager worker tasks.
 
 This module tests the Celery tasks that process expired FundHolds
-and release them automatically (auto-release to mentor policy).
+and release them automatically (auto-release to recipient policy).
 
 Tests follow TDD approach - written before implementation.
 """

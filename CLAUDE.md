@@ -18,6 +18,7 @@ docker-compose up -d
 
 # View logs
 docker-compose logs -f web
+docker-compose logs -f celery-worker
 ```
 
 ### Running Tests
@@ -65,7 +66,7 @@ app/                         # Django project root
 ├── core/                    # Domain-agnostic infrastructure (see app/core/CLAUDE.md)
 ├── toolkit/                 # Domain-aware SaaS utilities (see app/toolkit/CLAUDE.md)
 ├── authentication/          # User, Profile, LinkedAccount, social auth, biometric
-├── payments/                # Stripe integration
+├── payments/                # Stripe integration, escrow, subscriptions, ledger
 ├── notifications/           # Push notifications (FCM)
 ├── chat/                    # Real-time messaging (Channels)
 └── ai/                      # AI provider integrations
@@ -84,6 +85,26 @@ app/                         # Django project root
 - Protocols for external services (`EmailSender`, `PaymentProcessor`)
 - PII handling (`mask_email`, `mask_phone`)
 - Subscription decorators (`require_subscription`)
+
+### Key Architectural Patterns
+
+**Service Layer with ServiceResult:** All business logic lives in service classes that return `ServiceResult[T]` objects:
+```python
+result = SomeService.do_action(params)
+if result.success:
+    return result.data
+else:
+    # result.error contains error code and message
+```
+
+**State Machines:** Payment entities (PaymentOrder, Subscription, Payout, Refund) use state machine transitions. Always use transition methods, never set state directly.
+
+**Strategy Pattern (Payments):** Payment types use `PaymentOrchestrator` which selects the appropriate strategy:
+- `DirectPaymentStrategy` - Immediate settlement
+- `EscrowPaymentStrategy` - Held funds with release workflow
+- `SubscriptionPaymentStrategy` - Recurring billing
+
+**Double-Entry Ledger:** All financial operations create balanced ledger entries (debit + credit). Account types: `USER_BALANCE`, `PLATFORM_ESCROW`, `PLATFORM_REVENUE`, `EXTERNAL_STRIPE`.
 
 ### API Structure
 

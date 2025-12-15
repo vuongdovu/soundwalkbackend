@@ -12,7 +12,7 @@ Usage:
     # Create a payout after payment is captured
     payout = Payout.objects.create(
         payment_order=order,
-        connected_account=mentor_account,
+        connected_account=recipient_account,
         amount_cents=4500,  # After platform fee
     )
 

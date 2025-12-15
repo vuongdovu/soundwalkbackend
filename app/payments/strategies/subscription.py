@@ -2,11 +2,11 @@
 Subscription payment strategy for recurring payments via Stripe Billing.
 
 This strategy handles subscription-based payments where:
-1. Subscriber creates a subscription to a mentor
+1. Subscriber creates a subscription to a recipient
 2. Stripe handles recurring billing via invoices
 3. Each successful invoice creates a PaymentOrder linked to the Subscription
 4. Platform fee is deducted at each renewal
-5. Mentor balance accumulates in USER_BALANCE for monthly aggregated payout
+5. Recipient balance accumulates in USER_BALANCE for monthly aggregated payout
 
 State Flow for PaymentOrders:
     DRAFT -> PENDING -> PROCESSING -> CAPTURED -> SETTLED
@@ -14,7 +14,7 @@ State Flow for PaymentOrders:
 Ledger Flow on Success:
     Entry 1: Debit EXTERNAL_STRIPE, Credit PLATFORM_ESCROW (full amount)
     Entry 2: Debit PLATFORM_ESCROW, Credit PLATFORM_REVENUE (platform fee)
-    Entry 3: Debit PLATFORM_ESCROW, Credit USER_BALANCE (mentor's net amount)
+    Entry 3: Debit PLATFORM_ESCROW, Credit USER_BALANCE (recipient's net amount)
 
 Usage:
     from payments.strategies import SubscriptionPaymentStrategy
@@ -25,7 +25,7 @@ Usage:
     result = strategy.create_subscription(
         CreateSubscriptionParams(
             payer=subscriber,
-            recipient_profile_id=mentor_profile.pk,  # Profile uses user as primary key
+            recipient_profile_id=recipient_profile.pk,  # Profile uses user as primary key
             price_id='price_xxx',
             amount_cents=10000,
             currency='usd',
@@ -90,7 +90,7 @@ class CreateSubscriptionParams:
 
     Attributes:
         payer: User paying for the subscription
-        recipient_profile_id: UUID of the subscription recipient's profile (mentor)
+        recipient_profile_id: UUID of the subscription recipient's profile
         price_id: Stripe Price ID (price_xxx)
         amount_cents: Subscription amount in smallest currency unit (e.g., cents)
         currency: ISO 4217 currency code (default: 'usd')
@@ -147,7 +147,7 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
     - Stripe handles the recurring billing via Subscriptions and Invoices
     - Each billing cycle triggers an invoice.paid webhook
     - PaymentOrders are created reactively from webhooks, not proactively
-    - Mentor balance accumulates in USER_BALANCE for monthly aggregated payout
+    - Recipient balance accumulates in USER_BALANCE for monthly aggregated payout
     - Platform fee is deducted at each renewal (same 15% as other strategies)
 
     State Flow for PaymentOrders:
@@ -397,7 +397,7 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
         3. Record ledger entries:
            - Payment received (EXTERNAL_STRIPE -> PLATFORM_ESCROW)
            - Platform fee (PLATFORM_ESCROW -> PLATFORM_REVENUE)
-           - Mentor credit (PLATFORM_ESCROW -> USER_BALANCE)
+           - Recipient credit (PLATFORM_ESCROW -> USER_BALANCE)
         4. Update subscription state if needed
         5. Save the updated order
 
@@ -437,7 +437,7 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
             payment_order.settle_from_captured()
             payment_order.save()
 
-            # Record ledger entries (payment + fee + mentor credit)
+            # Record ledger entries (payment + fee + recipient credit)
             self._record_subscription_payment_ledger_entries(payment_order)
 
             # Update subscription state if needed
@@ -485,7 +485,7 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
         Creates three entries atomically:
         1. Payment received: EXTERNAL_STRIPE -> PLATFORM_ESCROW (full amount)
         2. Platform fee: PLATFORM_ESCROW -> PLATFORM_REVENUE (fee amount)
-        3. Mentor credit: PLATFORM_ESCROW -> USER_BALANCE (net amount)
+        3. Recipient credit: PLATFORM_ESCROW -> USER_BALANCE (net amount)
 
         Uses stripe_invoice_id-based idempotency keys to ensure entries are
         only created once, even if webhook is delivered multiple times.
@@ -521,16 +521,16 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
             currency=payment_order.currency,
         )
 
-        # Mentor's USER_BALANCE account
-        mentor_balance_account = LedgerService.get_or_create_account(
+        # Recipient's USER_BALANCE account
+        recipient_balance_account = LedgerService.get_or_create_account(
             AccountType.USER_BALANCE,
             owner_id=subscription.recipient_profile_id,
             currency=payment_order.currency,
         )
 
-        # Calculate platform fee and mentor's net
+        # Calculate platform fee and recipient's net
         platform_fee = self.calculate_platform_fee(payment_order.amount_cents)
-        mentor_net = payment_order.amount_cents - platform_fee
+        recipient_net = payment_order.amount_cents - platform_fee
 
         # Use invoice ID for idempotency (unique per payment)
         invoice_id = payment_order.stripe_invoice_id or str(payment_order.id)
@@ -568,18 +568,18 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
                 )
             )
 
-        # Entry 3: Mentor credit (release to USER_BALANCE)
-        if mentor_net > 0:
+        # Entry 3: Recipient credit (release to USER_BALANCE)
+        if recipient_net > 0:
             entries.append(
                 RecordEntryParams(
                     debit_account_id=escrow_account.id,
-                    credit_account_id=mentor_balance_account.id,
-                    amount_cents=mentor_net,
+                    credit_account_id=recipient_balance_account.id,
+                    amount_cents=recipient_net,
                     entry_type=EntryType.PAYMENT_RELEASED,
                     idempotency_key=f"subscription:{invoice_id}:release",
                     reference_type="payment_order",
                     reference_id=payment_order.id,
-                    description=f"Mentor credit for subscription order {payment_order.id}",
+                    description=f"Recipient credit for subscription order {payment_order.id}",
                     created_by="subscription_payment_strategy",
                 )
             )
@@ -593,7 +593,7 @@ class SubscriptionPaymentStrategy(PaymentStrategy):
                 "subscription_id": str(subscription.id),
                 "amount_cents": payment_order.amount_cents,
                 "platform_fee": platform_fee,
-                "mentor_net": mentor_net,
+                "recipient_net": recipient_net,
                 "entries_count": len(entries),
             },
         )

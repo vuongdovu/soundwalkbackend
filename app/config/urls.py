@@ -63,6 +63,8 @@ api_v1_patterns = [
     path("notifications/", include("notifications.urls")),
     # Payments
     path("payments/", include("payments.urls")),
+    # Media
+    path("media/", include("media.urls")),
 ]
 
 urlpatterns = [

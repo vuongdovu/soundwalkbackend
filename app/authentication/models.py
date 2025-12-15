@@ -321,6 +321,20 @@ class Profile(BaseModel):
         help_text="Base64-encoded EC public key (DER format) for biometric auth",
     )
 
+    # =========================================================================
+    # Storage Quota
+    # =========================================================================
+
+    total_storage_bytes = models.BigIntegerField(
+        default=0,
+        help_text="Total storage used by this user in bytes",
+    )
+
+    storage_quota_bytes = models.BigIntegerField(
+        default=5 * 1024 * 1024 * 1024,  # 5GB default
+        help_text="Maximum storage allowed for this user in bytes (default 5GB)",
+    )
+
     class Meta:
         db_table = "authentication_profile"
         verbose_name = "profile"
@@ -342,6 +356,64 @@ class Profile(BaseModel):
     def full_name(self):
         """Return full name or empty string."""
         return f"{self.first_name} {self.last_name}".strip()
+
+    # =========================================================================
+    # Storage Quota Properties & Methods
+    # =========================================================================
+
+    @property
+    def storage_used_mb(self) -> float:
+        """Return storage used in megabytes."""
+        return self.total_storage_bytes / (1024 * 1024)
+
+    @property
+    def storage_quota_mb(self) -> float:
+        """Return storage quota in megabytes."""
+        return self.storage_quota_bytes / (1024 * 1024)
+
+    @property
+    def storage_used_percent(self) -> float:
+        """Return percentage of storage quota used."""
+        if self.storage_quota_bytes == 0:
+            return 100.0
+        return (self.total_storage_bytes / self.storage_quota_bytes) * 100
+
+    @property
+    def storage_remaining_bytes(self) -> int:
+        """Return remaining storage in bytes."""
+        return max(0, self.storage_quota_bytes - self.total_storage_bytes)
+
+    def can_upload(self, file_size_bytes: int) -> bool:
+        """
+        Check if user can upload a file of given size.
+
+        Args:
+            file_size_bytes: Size of file to upload in bytes
+
+        Returns:
+            True if user has enough quota, False otherwise
+        """
+        return (self.total_storage_bytes + file_size_bytes) <= self.storage_quota_bytes
+
+    def add_storage_usage(self, bytes_used: int) -> None:
+        """
+        Add to storage usage (call after successful upload).
+
+        Args:
+            bytes_used: Number of bytes to add
+        """
+        self.total_storage_bytes += bytes_used
+        self.save(update_fields=["total_storage_bytes", "updated_at"])
+
+    def subtract_storage_usage(self, bytes_freed: int) -> None:
+        """
+        Subtract from storage usage (call after file deletion).
+
+        Args:
+            bytes_freed: Number of bytes to subtract
+        """
+        self.total_storage_bytes = max(0, self.total_storage_bytes - bytes_freed)
+        self.save(update_fields=["total_storage_bytes", "updated_at"])
 
     def clean(self):
         """Validate and normalize username."""

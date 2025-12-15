@@ -343,7 +343,7 @@ def create_monthly_subscription_payouts(
     """
     Monthly task to create payouts for subscription revenue.
 
-    Aggregates USER_BALANCE for all mentors with connected accounts and
+    Aggregates USER_BALANCE for all recipients with connected accounts and
     creates Payout records for balances exceeding the minimum threshold.
 
     This task should be scheduled via celery-beat to run on the 1st of

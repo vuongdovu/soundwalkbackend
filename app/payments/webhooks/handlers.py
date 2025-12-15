@@ -1041,7 +1041,7 @@ def handle_invoice_paid(webhook_event: WebhookEvent) -> ServiceResult:
     1. Skips non-subscription invoices
     2. Finds or creates the PaymentOrder for this invoice
     3. Transitions PaymentOrder through states to SETTLED
-    4. Records ledger entries (payment, fee, mentor credit)
+    4. Records ledger entries (payment, fee, recipient credit)
     5. Updates subscription state (activates on first payment, reactivates if past_due)
 
     Args:

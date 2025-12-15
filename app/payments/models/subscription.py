@@ -2,7 +2,7 @@
 Subscription model for recurring payment management.
 
 Subscription tracks an ongoing subscription relationship between a subscriber
-and a recipient (mentor). Each billing cycle creates a PaymentOrder linked
+and a recipient. Each billing cycle creates a PaymentOrder linked
 to this Subscription.
 
 Usage:
@@ -12,7 +12,7 @@ Usage:
     # Create a new subscription
     subscription = Subscription.objects.create(
         payer=subscriber,
-        recipient_profile_id=mentor_profile.pk,  # Profile uses user as primary key
+        recipient_profile_id=recipient_profile.pk,  # Profile uses user as primary key
         stripe_subscription_id="sub_xxx",
         stripe_customer_id="cus_xxx",
         stripe_price_id="price_xxx",
@@ -62,7 +62,7 @@ class Subscription(UUIDPrimaryKeyMixin, BaseModel):
 
     Fields:
         payer: User paying for the subscription
-        recipient_profile_id: Profile UUID of the subscription recipient (mentor)
+        recipient_profile_id: Profile UUID of the subscription recipient
         stripe_subscription_id: Stripe Subscription ID (sub_xxx)
         stripe_customer_id: Stripe Customer ID (cus_xxx)
         stripe_price_id: Stripe Price ID (price_xxx)
@@ -94,7 +94,7 @@ class Subscription(UUIDPrimaryKeyMixin, BaseModel):
     # and allow flexibility if profile model changes
     recipient_profile_id = models.UUIDField(
         db_index=True,
-        help_text="Profile UUID of the subscription recipient (mentor)",
+        help_text="Profile UUID of the subscription recipient",
     )
 
     # ==========================================================================

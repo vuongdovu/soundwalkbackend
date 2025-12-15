@@ -5,7 +5,7 @@ Tests the complete subscription lifecycle:
 1. Subscription creation creates local Subscription in PENDING state
 2. First invoice.paid webhook activates subscription and creates PaymentOrder
 3. Subsequent invoice.paid webhooks create renewal PaymentOrders
-4. Ledger entries accumulate mentor's USER_BALANCE
+4. Ledger entries accumulate recipient's USER_BALANCE
 5. Monthly payout aggregates subscription revenue
 6. Subscription cancellation marks subscription as CANCELLED
 
@@ -47,24 +47,24 @@ def subscriber(db):
 
 
 @pytest.fixture
-def mentor(db):
-    """Create a mentor user."""
-    return UserFactory(email="mentor@integration.test")
+def recipient(db):
+    """Create a recipient user."""
+    return UserFactory(email="recipient@integration.test")
 
 
 @pytest.fixture
-def mentor_profile(db, mentor):
-    """Get the mentor's profile."""
+def recipient_profile(db, recipient):
+    """Get the recipient's profile."""
     from authentication.models import Profile
 
-    return Profile.objects.get(user=mentor)
+    return Profile.objects.get(user=recipient)
 
 
 @pytest.fixture
-def mentor_connected_account(db, mentor_profile):
-    """Create a connected account for the mentor ready for payouts."""
+def recipient_connected_account(db, recipient_profile):
+    """Create a connected account for the recipient ready for payouts."""
     return ConnectedAccountFactory(
-        profile=mentor_profile,
+        profile=recipient_profile,
         onboarding_status=OnboardingStatus.COMPLETE,
         payouts_enabled=True,
         charges_enabled=True,
@@ -108,13 +108,13 @@ def mock_stripe_adapter():
 
 
 @pytest.fixture
-def pending_subscription(db, subscriber, mentor_profile):
+def pending_subscription(db, subscriber, recipient_profile):
     """Create a subscription in PENDING state awaiting first payment."""
     from payments.models import Subscription
 
     return Subscription.objects.create(
         payer=subscriber,
-        recipient_profile_id=mentor_profile.pk,
+        recipient_profile_id=recipient_profile.pk,
         stripe_subscription_id="sub_integration_test_123",
         stripe_customer_id="cus_integration_test_123",
         stripe_price_id="price_monthly_10000",
@@ -127,13 +127,13 @@ def pending_subscription(db, subscriber, mentor_profile):
 
 
 @pytest.fixture
-def active_subscription(db, subscriber, mentor_profile):
+def active_subscription(db, subscriber, recipient_profile):
     """Create an active subscription."""
     from payments.models import Subscription
 
     subscription = Subscription.objects.create(
         payer=subscriber,
-        recipient_profile_id=mentor_profile.pk,
+        recipient_profile_id=recipient_profile.pk,
         stripe_subscription_id="sub_integration_active_123",
         stripe_customer_id="cus_integration_test_123",
         stripe_price_id="price_monthly_10000",
@@ -160,8 +160,8 @@ class TestSubscriptionLifecycleIntegration:
     def test_full_subscription_lifecycle_create_renew_cancel(
         self,
         subscriber,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
         mock_stripe_adapter,
     ):
         """
@@ -172,7 +172,7 @@ class TestSubscriptionLifecycleIntegration:
         2. First invoice.paid webhook activates subscription
         3. PaymentOrder created and settled
         4. Simulate 3 renewals (monthly billing cycles)
-        5. Verify mentor balance accumulates correctly
+        5. Verify recipient balance accumulates correctly
         6. Cancel subscription
         7. Verify subscription is CANCELLED
         """
@@ -192,7 +192,7 @@ class TestSubscriptionLifecycleIntegration:
 
         create_params = CreateSubscriptionParams(
             payer=subscriber,
-            recipient_profile_id=mentor_profile.pk,
+            recipient_profile_id=recipient_profile.pk,
             price_id="price_monthly_10000",
             amount_cents=10000,
             currency="usd",
@@ -293,13 +293,13 @@ class TestSubscriptionLifecycleIntegration:
         total_orders = PaymentOrder.objects.filter(subscription=subscription).count()
         assert total_orders == 3  # 1 first payment + 2 renewals
 
-        # Step 5: Verify mentor's accumulated balance
-        mentor_account = LedgerService.get_or_create_account(
+        # Step 5: Verify recipient's accumulated balance
+        recipient_account = LedgerService.get_or_create_account(
             AccountType.USER_BALANCE,
-            owner_id=mentor_profile.pk,
+            owner_id=recipient_profile.pk,
             currency="usd",
         )
-        balance = LedgerService.get_balance(mentor_account.id)
+        balance = LedgerService.get_balance(recipient_account.id)
 
         # 3 payments × $100 × 85% (after 15% fee) = $255.00 = 25500 cents
         assert balance.cents == 25500
@@ -337,10 +337,10 @@ class TestSubscriptionLifecycleIntegration:
     def test_multiple_renewals_accumulate_in_user_balance(
         self,
         active_subscription,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
     ):
-        """Test that subscription renewals accumulate in mentor's USER_BALANCE."""
+        """Test that subscription renewals accumulate in recipient's USER_BALANCE."""
         from payments.webhooks.handlers import handle_invoice_paid
         from payments.models import WebhookEvent
 
@@ -382,12 +382,12 @@ class TestSubscriptionLifecycleIntegration:
             assert result.success is True
 
         # Verify accumulated balance
-        mentor_account = LedgerService.get_or_create_account(
+        recipient_account = LedgerService.get_or_create_account(
             AccountType.USER_BALANCE,
-            owner_id=mentor_profile.pk,
+            owner_id=recipient_profile.pk,
             currency="usd",
         )
-        balance = LedgerService.get_balance(mentor_account.id)
+        balance = LedgerService.get_balance(recipient_account.id)
 
         # 5 payments × $100 × 85% = $425.00 = 42500 cents
         assert balance.cents == 42500
@@ -402,8 +402,8 @@ class TestSubscriptionLifecycleIntegration:
     def test_monthly_payout_aggregates_subscription_revenue(
         self,
         active_subscription,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
     ):
         """Test that monthly payout task aggregates subscription revenue."""
         from payments.webhooks.handlers import handle_invoice_paid
@@ -441,13 +441,13 @@ class TestSubscriptionLifecycleIntegration:
             result = handle_invoice_paid(webhook)
             assert result.success is True
 
-        # Verify mentor balance before payout
-        mentor_account = LedgerService.get_or_create_account(
+        # Verify recipient balance before payout
+        recipient_account = LedgerService.get_or_create_account(
             AccountType.USER_BALANCE,
-            owner_id=mentor_profile.pk,
+            owner_id=recipient_profile.pk,
             currency="usd",
         )
-        balance_before = LedgerService.get_balance(mentor_account.id)
+        balance_before = LedgerService.get_balance(recipient_account.id)
 
         # 3 payments × $85 = $255.00 = 25500 cents
         assert balance_before.cents == 25500
@@ -456,14 +456,16 @@ class TestSubscriptionLifecycleIntegration:
         with patch("payments.tasks.execute_single_payout") as mock_execute:
             result = create_monthly_subscription_payouts()
 
-            # Verify payout was created for the mentor
+            # Verify payout was created for the recipient
             assert result["payouts_created"] >= 1
 
             # Verify execute_single_payout was queued
             assert mock_execute.delay.called
 
         # Verify Payout model was created with correct amount
-        new_payouts = Payout.objects.filter(connected_account__profile=mentor_profile)
+        new_payouts = Payout.objects.filter(
+            connected_account__profile=recipient_profile
+        )
         assert new_payouts.count() > 0
         payout = new_payouts.first()
         assert payout.amount_cents == 25500
@@ -476,8 +478,8 @@ class TestSubscriptionPaymentFailureRecovery:
     def test_payment_failure_marks_past_due_and_recovery_reactivates(
         self,
         active_subscription,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
     ):
         """
         Test payment failure recovery flow.
@@ -578,7 +580,7 @@ class TestSubscriptionEdgeCases:
     def test_renewal_with_inactive_connected_account(
         self,
         active_subscription,
-        mentor_profile,
+        recipient_profile,
     ):
         """Test renewal handling when connected account is disabled."""
         from payments.models import WebhookEvent
@@ -586,7 +588,7 @@ class TestSubscriptionEdgeCases:
 
         # Create disabled connected account (assigned to _ to indicate side-effect creation)
         ConnectedAccountFactory(
-            profile=mentor_profile,
+            profile=recipient_profile,
             onboarding_status=OnboardingStatus.REJECTED,
             payouts_enabled=False,
             charges_enabled=False,
@@ -634,8 +636,8 @@ class TestSubscriptionEdgeCases:
     def test_subscription_cancellation_mid_period(
         self,
         active_subscription,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
     ):
         """Test subscription cancellation in the middle of billing period."""
         from payments.models import Subscription, WebhookEvent
@@ -737,19 +739,19 @@ class TestSubscriptionEdgeCases:
         assert active_subscription.state == SubscriptionState.CANCELLED
 
         # Mentor should still have their earned balance
-        mentor_account = LedgerService.get_or_create_account(
+        recipient_account = LedgerService.get_or_create_account(
             AccountType.USER_BALANCE,
-            owner_id=mentor_profile.pk,
+            owner_id=recipient_profile.pk,
             currency="usd",
         )
-        balance = LedgerService.get_balance(mentor_account.id)
+        balance = LedgerService.get_balance(recipient_account.id)
         assert balance.cents == 8500  # $85 (85% of $100)
 
     def test_duplicate_webhook_handling(
         self,
         active_subscription,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
     ):
         """Test that duplicate webhooks are handled idempotently."""
         from payments.models import WebhookEvent
@@ -823,20 +825,20 @@ class TestSubscriptionLedgerConsistency:
 
     def test_ledger_balances_after_multiple_subscriptions(
         self,
-        mentor_profile,
-        mentor_connected_account,
+        recipient_profile,
+        recipient_connected_account,
     ):
         """Test ledger consistency with multiple concurrent subscriptions."""
         from payments.models import Subscription, WebhookEvent
         from payments.webhooks.handlers import handle_invoice_paid
 
-        # Create 3 subscribers with subscriptions to the same mentor
+        # Create 3 subscribers with subscriptions to the same recipient
         subscriptions = []
         for i in range(3):
             subscriber = UserFactory(email=f"sub_{i}@test.com")
             subscription = Subscription.objects.create(
                 payer=subscriber,
-                recipient_profile_id=mentor_profile.pk,
+                recipient_profile_id=recipient_profile.pk,
                 stripe_subscription_id=f"sub_multi_{i}_123",
                 stripe_customer_id=f"cus_multi_{i}_123",
                 stripe_price_id="price_monthly_10000",
@@ -888,13 +890,13 @@ class TestSubscriptionLedgerConsistency:
         ).count()
         assert total_orders == 6
 
-        # Verify mentor's total balance
-        mentor_account = LedgerService.get_or_create_account(
+        # Verify recipient's total balance
+        recipient_account = LedgerService.get_or_create_account(
             AccountType.USER_BALANCE,
-            owner_id=mentor_profile.pk,
+            owner_id=recipient_profile.pk,
             currency="usd",
         )
-        balance = LedgerService.get_balance(mentor_account.id)
+        balance = LedgerService.get_balance(recipient_account.id)
 
         # 6 payments × $100 × 85% = $510.00 = 51000 cents
         assert balance.cents == 51000
