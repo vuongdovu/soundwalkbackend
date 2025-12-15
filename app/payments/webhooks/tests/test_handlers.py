@@ -771,6 +771,249 @@ class TestHandleTransferPaid:
         # paid_at should not have changed
         assert payout.paid_at == original_paid_at
 
+    def test_creates_ledger_entry_on_completion(
+        self, db, scheduled_payout_with_transfer_id
+    ):
+        """Should create ledger entry when payout completes."""
+        from payments.ledger import LedgerService
+        from payments.ledger.models import LedgerEntry, EntryType, AccountType
+        from payments.ledger.types import RecordEntryParams
+
+        payout = scheduled_payout_with_transfer_id
+
+        # Seed the USER_BALANCE account with funds (simulating prior payment release)
+        # In the real flow, money is credited when hold is released
+        recipient_profile_id = payout.connected_account.profile_id
+        user_balance = LedgerService.get_or_create_account(
+            AccountType.USER_BALANCE,
+            owner_id=recipient_profile_id,
+            currency=payout.currency,
+        )
+        external_account = LedgerService.get_or_create_account(
+            AccountType.EXTERNAL_STRIPE,
+            owner_id=None,
+            currency=payout.currency,
+            allow_negative=True,
+        )
+        # Seed balance by recording money coming in
+        LedgerService.record_entry(
+            RecordEntryParams(
+                debit_account_id=external_account.id,
+                credit_account_id=user_balance.id,
+                amount_cents=payout.amount_cents,
+                entry_type=EntryType.PAYMENT_RELEASED,
+                idempotency_key=f"test_seed:{payout.id}",
+                description="Test seed for payout ledger test",
+                created_by="test",
+            )
+        )
+
+        webhook_event = WebhookEvent.objects.create(
+            stripe_event_id="evt_tr_paid_ledger_123",
+            event_type="transfer.paid",
+            payload={
+                "id": "evt_tr_paid_ledger_123",
+                "type": "transfer.paid",
+                "data": {
+                    "object": {
+                        "id": payout.stripe_transfer_id,
+                        "object": "transfer",
+                        "amount": payout.amount_cents,
+                    }
+                },
+            },
+            status=WebhookEventStatus.PENDING,
+        )
+
+        result = handle_transfer_paid(webhook_event)
+
+        assert result.success is True
+
+        # Verify ledger entry was created
+        entries = LedgerEntry.objects.filter(
+            reference_type="payout",
+            reference_id=payout.id,
+        )
+        assert entries.count() == 1
+
+        entry = entries.first()
+        assert entry.entry_type == EntryType.PAYOUT
+        assert entry.amount_cents == payout.amount_cents
+        assert entry.idempotency_key == f"payout:{payout.id}:completion"
+        assert entry.created_by == "transfer_paid_handler"
+
+    def test_ledger_entry_is_idempotent(self, db, scheduled_payout_with_transfer_id):
+        """Should not create duplicate ledger entries on duplicate webhooks."""
+        from payments.ledger import LedgerService
+        from payments.ledger.models import LedgerEntry, AccountType, EntryType
+        from payments.ledger.types import RecordEntryParams
+
+        payout = scheduled_payout_with_transfer_id
+
+        # Seed the USER_BALANCE account with funds
+        recipient_profile_id = payout.connected_account.profile_id
+        user_balance = LedgerService.get_or_create_account(
+            AccountType.USER_BALANCE,
+            owner_id=recipient_profile_id,
+            currency=payout.currency,
+        )
+        external_account = LedgerService.get_or_create_account(
+            AccountType.EXTERNAL_STRIPE,
+            owner_id=None,
+            currency=payout.currency,
+            allow_negative=True,
+        )
+        LedgerService.record_entry(
+            RecordEntryParams(
+                debit_account_id=external_account.id,
+                credit_account_id=user_balance.id,
+                amount_cents=payout.amount_cents,
+                entry_type=EntryType.PAYMENT_RELEASED,
+                idempotency_key=f"test_seed_idempotent:{payout.id}",
+                description="Test seed for payout idempotency test",
+                created_by="test",
+            )
+        )
+
+        # Create first webhook event
+        webhook_event = WebhookEvent.objects.create(
+            stripe_event_id="evt_tr_paid_idemp_1",
+            event_type="transfer.paid",
+            payload={
+                "id": "evt_tr_paid_idemp_1",
+                "type": "transfer.paid",
+                "data": {
+                    "object": {
+                        "id": payout.stripe_transfer_id,
+                        "object": "transfer",
+                    }
+                },
+            },
+            status=WebhookEventStatus.PENDING,
+        )
+
+        # First call
+        result1 = handle_transfer_paid(webhook_event)
+        assert result1.success is True
+
+        # Count entries after first call
+        entry_count_after_first = LedgerEntry.objects.filter(
+            reference_type="payout",
+            reference_id=payout.id,
+        ).count()
+        assert entry_count_after_first == 1
+
+        # Create second webhook event (simulating duplicate delivery)
+        # Note: The payout is now PAID, so we just verify no additional entries
+        # The handler will return early for PAID state
+        entries_before_second = LedgerEntry.objects.count()
+
+        webhook_event2 = WebhookEvent.objects.create(
+            stripe_event_id="evt_tr_paid_idemp_2",
+            event_type="transfer.paid",
+            payload={
+                "id": "evt_tr_paid_idemp_2",
+                "type": "transfer.paid",
+                "data": {
+                    "object": {
+                        "id": payout.stripe_transfer_id,
+                        "object": "transfer",
+                    }
+                },
+            },
+            status=WebhookEventStatus.PENDING,
+        )
+
+        result2 = handle_transfer_paid(webhook_event2)
+        assert result2.success is True
+
+        # No new entries created
+        assert LedgerEntry.objects.count() == entries_before_second
+
+    def test_settles_released_payment_order(
+        self, db, released_payment_order_with_payout
+    ):
+        """Should settle PaymentOrder when payout completes (escrow flow)."""
+        order = released_payment_order_with_payout["order"]
+        payout = released_payment_order_with_payout["payout"]
+
+        # Verify initial state
+        assert order.state == PaymentOrderState.RELEASED
+        assert payout.state == PayoutState.PROCESSING
+
+        webhook_event = WebhookEvent.objects.create(
+            stripe_event_id="evt_tr_paid_settle_123",
+            event_type="transfer.paid",
+            payload={
+                "id": "evt_tr_paid_settle_123",
+                "type": "transfer.paid",
+                "data": {
+                    "object": {
+                        "id": payout.stripe_transfer_id,
+                        "object": "transfer",
+                        "amount": payout.amount_cents,
+                    }
+                },
+            },
+            status=WebhookEventStatus.PENDING,
+        )
+
+        result = handle_transfer_paid(webhook_event)
+
+        assert result.success is True
+
+        # Reload from DB
+        payout = Payout.objects.get(id=payout.id)
+        order = PaymentOrder.objects.get(id=order.id)
+
+        # Payout should be PAID
+        assert payout.state == PayoutState.PAID
+        assert payout.paid_at is not None
+
+        # PaymentOrder should be SETTLED
+        assert order.state == PaymentOrderState.SETTLED
+        assert order.settled_at is not None
+
+    def test_does_not_settle_non_released_order(
+        self, db, processing_payout_with_transfer_id
+    ):
+        """Should not attempt to settle order that is not in RELEASED state."""
+        payout = processing_payout_with_transfer_id
+        order = payout.payment_order
+
+        # Order is in PENDING state (from fixture)
+        assert order.state == PaymentOrderState.PENDING
+
+        webhook_event = WebhookEvent.objects.create(
+            stripe_event_id="evt_tr_paid_no_settle_123",
+            event_type="transfer.paid",
+            payload={
+                "id": "evt_tr_paid_no_settle_123",
+                "type": "transfer.paid",
+                "data": {
+                    "object": {
+                        "id": payout.stripe_transfer_id,
+                        "object": "transfer",
+                    }
+                },
+            },
+            status=WebhookEventStatus.PENDING,
+        )
+
+        result = handle_transfer_paid(webhook_event)
+
+        assert result.success is True
+
+        # Reload from DB
+        payout = Payout.objects.get(id=payout.id)
+        order = PaymentOrder.objects.get(id=order.id)
+
+        # Payout should be PAID
+        assert payout.state == PayoutState.PAID
+
+        # Order should remain PENDING (not settled)
+        assert order.state == PaymentOrderState.PENDING
+
 
 # =============================================================================
 # Transfer Failed Handler Tests

@@ -1,9 +1,9 @@
 """
 Payment services for coordinating payment operations.
 
-This module provides the PaymentOrchestrator which serves as the
-entry point for all payment operations. It coordinates between
-strategies, the Stripe adapter, and the ledger.
+This module provides:
+- PaymentOrchestrator: Entry point for payment initiation
+- PayoutService: Executes payouts to connected accounts
 
 Usage:
     from payments.services import PaymentOrchestrator, InitiatePaymentParams
@@ -16,14 +16,25 @@ Usage:
             currency='usd',
         )
     )
+
+    # Execute a payout
+    from payments.services import PayoutService
+
+    result = PayoutService.execute_payout(payout_id)
 """
 
 from payments.services.payment_orchestrator import (
     InitiatePaymentParams,
     PaymentOrchestrator,
 )
+from payments.services.payout_service import (
+    PayoutExecutionResult,
+    PayoutService,
+)
 
 __all__ = [
     "InitiatePaymentParams",
     "PaymentOrchestrator",
+    "PayoutExecutionResult",
+    "PayoutService",
 ]

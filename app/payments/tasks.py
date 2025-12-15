@@ -5,12 +5,23 @@ This module provides async tasks for:
 - Processing Stripe webhook events
 - Retrying failed webhook events
 - Periodic cleanup of old/stuck events
+- Processing pending payouts
+- Retrying failed payouts
+- Processing expired escrow holds
 
 Usage:
     from payments.tasks import process_webhook_event
 
     # Queue a webhook for async processing
     process_webhook_event.delay(webhook_event_id)
+
+    # Queue a payout for execution
+    from payments.tasks import execute_single_payout
+    execute_single_payout.delay(str(payout_id))
+
+    # Process all pending payouts (typically via celery-beat)
+    from payments.tasks import process_pending_payouts
+    process_pending_payouts.delay()
 """
 
 from __future__ import annotations
@@ -300,3 +311,18 @@ def cleanup_old_webhooks(days: int = 90) -> dict:
         )
 
     return {"deleted_count": deleted_count}
+
+
+# =============================================================================
+# Re-exported Worker Tasks
+# =============================================================================
+# These tasks are defined in payments.workers but re-exported here for
+# convenience and to ensure Celery autodiscover finds them.
+
+from payments.workers import (  # noqa: E402, F401
+    execute_single_payout,
+    process_expired_holds,
+    process_pending_payouts,
+    release_single_hold,
+    retry_failed_payouts,
+)

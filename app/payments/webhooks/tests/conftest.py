@@ -454,3 +454,51 @@ def failed_payout_with_transfer_id(
     payout.fail(reason="Initial failure for test")
     payout.save()
     return payout
+
+
+# =============================================================================
+# Released Payment Order with Payout (for transfer.paid settlement tests)
+# =============================================================================
+
+
+@pytest.fixture
+def released_payment_order_with_payout(db, test_user, connected_account_fixture):
+    """
+    Create a payment order in RELEASED state with a PROCESSING payout.
+
+    This represents the escrow flow where:
+    1. PaymentOrder is CAPTURED → HELD → RELEASED
+    2. Payout is created and in PROCESSING state
+    3. transfer.paid webhook should complete the payout and settle the order
+    """
+    order = PaymentOrder.objects.create(
+        payer=test_user,
+        amount_cents=10000,
+        currency="usd",
+        strategy_type=PaymentStrategyType.ESCROW,
+        stripe_payment_intent_id="pi_test_released_with_payout_123",
+    )
+    # Transition through states: DRAFT → PENDING → PROCESSING → CAPTURED → HELD → RELEASED
+    order.submit()
+    order.save()
+    order.process()
+    order.save()
+    order.capture()
+    order.save()
+    order.hold()
+    order.save()
+    order.release()
+    order.save()
+
+    # Create payout in PROCESSING state with transfer ID
+    payout = Payout.objects.create(
+        payment_order=order,
+        connected_account=connected_account_fixture,
+        amount_cents=9000,
+        currency="usd",
+        stripe_transfer_id="tr_test_released_payout_123",
+    )
+    payout.process()
+    payout.save()
+
+    return {"order": order, "payout": payout}

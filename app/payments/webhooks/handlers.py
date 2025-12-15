@@ -30,6 +30,9 @@ from django.db import transaction
 
 from core.services import ServiceResult
 
+from payments.ledger import LedgerService
+from payments.ledger.models import AccountType, EntryType
+from payments.ledger.types import RecordEntryParams
 from payments.models import ConnectedAccount, PaymentOrder, Payout, Refund, WebhookEvent
 from payments.services import PaymentOrchestrator
 from payments.state_machines import (
@@ -413,7 +416,11 @@ def handle_transfer_paid(webhook_event: WebhookEvent) -> ServiceResult:
 
     Called when Stripe sends transfer.paid webhook. This confirms
     that money has been transferred to the connected account.
-    Transitions the Payout to PAID state.
+
+    This handler:
+    1. Transitions the Payout to PAID state
+    2. Records ledger entry: USER_BALANCE[recipient] → EXTERNAL_STRIPE
+    3. Transitions PaymentOrder: RELEASED → SETTLED (for escrow payments)
 
     Args:
         webhook_event: The WebhookEvent containing the event data
@@ -482,6 +489,12 @@ def handle_transfer_paid(webhook_event: WebhookEvent) -> ServiceResult:
                     "amount_cents": payout.amount_cents,
                 },
             )
+
+            # Record ledger entry for money leaving platform
+            _record_payout_completion_ledger_entry(payout)
+
+            # Settle the PaymentOrder if in RELEASED state (escrow path)
+            _settle_payment_order_if_released(payout)
         else:
             # Wrong state - log warning but return success for graceful degradation
             logger.warning(
@@ -494,6 +507,112 @@ def handle_transfer_paid(webhook_event: WebhookEvent) -> ServiceResult:
             )
 
         return ServiceResult.success(payout)
+
+
+def _record_payout_completion_ledger_entry(payout: Payout) -> None:
+    """
+    Record ledger entry when payout completes.
+
+    Debits USER_BALANCE[recipient] and credits EXTERNAL_STRIPE to record
+    money leaving the platform and going to the recipient's bank account.
+
+    This entry is idempotent - duplicate calls with the same payout ID
+    will return the existing entry rather than creating a duplicate.
+
+    Args:
+        payout: The completed Payout record
+    """
+    # Get the recipient's profile ID from the connected account
+    recipient_profile_id = payout.connected_account.profile_id
+
+    # Get or create the user's balance account
+    user_balance = LedgerService.get_or_create_account(
+        AccountType.USER_BALANCE,
+        owner_id=recipient_profile_id,
+        currency=payout.currency,
+    )
+
+    # Get or create the external Stripe account (money leaving platform)
+    external_account = LedgerService.get_or_create_account(
+        AccountType.EXTERNAL_STRIPE,
+        owner_id=None,
+        currency=payout.currency,
+        allow_negative=True,
+    )
+
+    # Record the payout entry
+    try:
+        LedgerService.record_entry(
+            RecordEntryParams(
+                debit_account_id=user_balance.id,
+                credit_account_id=external_account.id,
+                amount_cents=payout.amount_cents,
+                entry_type=EntryType.PAYOUT,
+                idempotency_key=f"payout:{payout.id}:completion",
+                reference_type="payout",
+                reference_id=payout.id,
+                description=f"Payout to connected account {payout.connected_account.stripe_account_id}",
+                created_by="transfer_paid_handler",
+            )
+        )
+        logger.info(
+            "Recorded payout completion ledger entry",
+            extra={
+                "payout_id": str(payout.id),
+                "amount_cents": payout.amount_cents,
+                "recipient_profile_id": str(recipient_profile_id),
+            },
+        )
+    except Exception as e:
+        # Log but don't fail - the payout is already complete
+        # Reconciliation will catch any missing ledger entries
+        logger.error(
+            "Failed to record payout completion ledger entry",
+            extra={
+                "payout_id": str(payout.id),
+                "error": str(e),
+            },
+            exc_info=True,
+        )
+
+
+def _settle_payment_order_if_released(payout: Payout) -> None:
+    """
+    Settle the PaymentOrder if it's in RELEASED state.
+
+    For escrow payments, the PaymentOrder goes through:
+    HELD → RELEASED (when hold is released) → SETTLED (when payout completes)
+
+    This function handles the final transition to SETTLED.
+
+    Args:
+        payout: The completed Payout record
+    """
+    payment_order = payout.payment_order
+
+    if payment_order.state == PaymentOrderState.RELEASED:
+        # Lock and transition to SETTLED
+        payment_order = PaymentOrder.objects.select_for_update().get(
+            id=payment_order.id
+        )
+
+        # Double-check state after locking (could have changed)
+        if payment_order.state == PaymentOrderState.RELEASED:
+            payment_order.settle_from_released()
+            payment_order.save()
+            logger.info(
+                "PaymentOrder settled after payout completion",
+                extra={
+                    "payment_order_id": str(payment_order.id),
+                    "payout_id": str(payout.id),
+                },
+            )
+    elif payment_order.state == PaymentOrderState.SETTLED:
+        # Already settled - this is fine (idempotent)
+        logger.info(
+            "PaymentOrder already settled",
+            extra={"payment_order_id": str(payment_order.id)},
+        )
 
 
 @register_handler("transfer.failed")
