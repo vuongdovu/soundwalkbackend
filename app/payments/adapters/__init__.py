@@ -19,22 +19,30 @@ Usage:
 """
 
 from payments.adapters.stripe_adapter import (
+    CreateCustomerParams,
     CreatePaymentIntentParams,
+    CreateSubscriptionParams,
+    CustomerResult,
     IdempotencyKeyGenerator,
     PaymentIntentResult,
     RefundResult,
     StripeAdapter,
+    SubscriptionResult,
     TransferResult,
     backoff_delay,
     is_retryable_stripe_error,
 )
 
 __all__ = [
+    "CreateCustomerParams",
     "CreatePaymentIntentParams",
+    "CreateSubscriptionParams",
+    "CustomerResult",
     "IdempotencyKeyGenerator",
     "PaymentIntentResult",
     "RefundResult",
     "StripeAdapter",
+    "SubscriptionResult",
     "TransferResult",
     "backoff_delay",
     "is_retryable_stripe_error",

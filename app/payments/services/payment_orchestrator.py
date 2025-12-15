@@ -43,7 +43,9 @@ from payments.strategies import (
     CreatePaymentParams,
     DirectPaymentStrategy,
     PaymentResult,
+    SubscriptionPaymentStrategy,
 )
+from payments.strategies.escrow import EscrowPaymentStrategy
 
 if TYPE_CHECKING:
     from authentication.models import User
@@ -131,9 +133,8 @@ class PaymentOrchestrator(BaseService):
     # Strategy registry - maps strategy type to strategy class
     STRATEGIES: dict[str, type[PaymentStrategy]] = {
         PaymentStrategyType.DIRECT: DirectPaymentStrategy,
-        # Future strategies:
-        # PaymentStrategyType.ESCROW: EscrowPaymentStrategy,
-        # PaymentStrategyType.SUBSCRIPTION: SubscriptionPaymentStrategy,
+        PaymentStrategyType.ESCROW: EscrowPaymentStrategy,
+        PaymentStrategyType.SUBSCRIPTION: SubscriptionPaymentStrategy,
     }
 
     @classmethod

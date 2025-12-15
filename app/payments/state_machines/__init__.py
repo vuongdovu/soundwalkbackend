@@ -10,6 +10,7 @@ from payments.state_machines.states import (
     PaymentStrategyType,
     PayoutState,
     RefundState,
+    SubscriptionState,
     WebhookEventStatus,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "PaymentStrategyType",
     "PayoutState",
     "RefundState",
+    "SubscriptionState",
     "WebhookEventStatus",
 ]

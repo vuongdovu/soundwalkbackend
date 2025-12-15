@@ -84,7 +84,9 @@ class Payout(UUIDPrimaryKeyMixin, BaseModel):
         "payments.PaymentOrder",
         on_delete=models.PROTECT,
         related_name="payouts",
-        help_text="Payment order this payout originates from",
+        null=True,
+        blank=True,
+        help_text="Payment order this payout originates from. Null for aggregated payouts.",
     )
 
     connected_account = models.ForeignKey(

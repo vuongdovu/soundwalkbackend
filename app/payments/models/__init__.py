@@ -10,6 +10,7 @@ This module contains all payment-related models:
 - WebhookEvent: Stripe webhook event tracking for idempotent processing
 - ReconciliationRun: Tracks reconciliation run executions
 - ReconciliationDiscrepancy: Records discrepancies found during reconciliation
+- Subscription: Recurring subscription relationships
 """
 
 from payments.models.connected_account import ConnectedAccount
@@ -22,6 +23,7 @@ from payments.models.reconciliation import (
     ReconciliationRunStatus,
 )
 from payments.models.refund import Refund
+from payments.models.subscription import Subscription
 from payments.models.webhook_event import WebhookEvent
 
 __all__ = [
@@ -34,5 +36,6 @@ __all__ = [
     "ReconciliationRun",
     "ReconciliationRunStatus",
     "Refund",
+    "Subscription",
     "WebhookEvent",
 ]

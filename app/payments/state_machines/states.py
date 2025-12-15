@@ -147,6 +147,29 @@ class PaymentStrategyType(models.TextChoices):
     SUBSCRIPTION = "subscription", "Subscription"
 
 
+class SubscriptionState(models.TextChoices):
+    """
+    States for the Subscription model lifecycle.
+
+    Terminal states: CANCELLED
+
+    State Flow:
+        PENDING → ACTIVE (on first successful payment)
+        ACTIVE → PAST_DUE (on payment failure)
+        PAST_DUE → ACTIVE (on successful retry payment)
+        ACTIVE → CANCELLED (immediate cancellation)
+        PAST_DUE → CANCELLED (after max retries or explicit cancellation)
+
+    Note: cancel_at_period_end flag allows scheduling cancellation
+    without immediately transitioning to CANCELLED state.
+    """
+
+    PENDING = "pending", "Pending"
+    ACTIVE = "active", "Active"
+    PAST_DUE = "past_due", "Past Due"
+    CANCELLED = "cancelled", "Cancelled"
+
+
 __all__ = [
     "PaymentOrderState",
     "PayoutState",
@@ -154,4 +177,5 @@ __all__ = [
     "OnboardingStatus",
     "WebhookEventStatus",
     "PaymentStrategyType",
+    "SubscriptionState",
 ]

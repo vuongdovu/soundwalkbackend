@@ -62,14 +62,14 @@ from payments.exceptions import (
     StripeRateLimitError,
 )
 from payments.locks import DistributedLock
-from payments.models import PaymentOrder, Payout
+from payments.models import PaymentOrder, Payout, Subscription
 from payments.models.reconciliation import (
     DiscrepancyResolution,
     ReconciliationDiscrepancy,
     ReconciliationRun,
     ReconciliationRunStatus,
 )
-from payments.state_machines import PaymentOrderState, PayoutState
+from payments.state_machines import PaymentOrderState, PayoutState, SubscriptionState
 
 if TYPE_CHECKING:
     from typing import Any
@@ -120,6 +120,16 @@ class DiscrepancyType(str, Enum):
     PAYMENT_STUCK_IN_PROCESSING = "payment_stuck_in_processing"
     PAYOUT_STUCK_IN_PROCESSING = "payout_stuck_in_processing"
 
+    # Subscription discrepancies
+    STRIPE_SUBSCRIPTION_ACTIVE_LOCAL_CANCELLED = (
+        "stripe_subscription_active_local_cancelled"
+    )
+    STRIPE_SUBSCRIPTION_CANCELLED_LOCAL_ACTIVE = (
+        "stripe_subscription_cancelled_local_active"
+    )
+    STRIPE_INVOICE_PAID_NO_LOCAL_ORDER = "stripe_invoice_paid_no_local_order"
+    SUBSCRIPTION_LOCAL_MISSING = "subscription_local_missing"
+
 
 @dataclass
 class Discrepancy:
@@ -155,6 +165,7 @@ class ReconciliationRunResult:
     completed_at: datetime | None
     payment_orders_checked: int
     payouts_checked: int
+    subscriptions_checked: int
     discrepancies_found: int
     auto_healed: int
     flagged_for_review: int
@@ -379,6 +390,7 @@ class ReconciliationService(BaseService):
         results: list[HealingResult] = []
         payment_orders_checked = 0
         payouts_checked = 0
+        subscriptions_checked = 0
 
         try:
             # Phase 1: Reconcile PaymentOrders
@@ -408,6 +420,19 @@ class ReconciliationService(BaseService):
                 limit=max_records,
             )
             results.extend(payout_results)
+
+            # Phase 3: Reconcile Subscriptions
+            cls.get_logger().info(
+                "Phase 3: Reconciling subscriptions",
+                extra={"run_id": str(run.id)},
+            )
+
+            subscription_results, subscriptions_checked = cls._reconcile_subscriptions(
+                run_id=run.id,
+                lookback_hours=lookback_hours,
+                limit=max_records,
+            )
+            results.extend(subscription_results)
 
             # Calculate summary stats
             discrepancies_found = len(results)
@@ -443,6 +468,7 @@ class ReconciliationService(BaseService):
                     "run_id": str(run.id),
                     "payment_orders_checked": payment_orders_checked,
                     "payouts_checked": payouts_checked,
+                    "subscriptions_checked": subscriptions_checked,
                     "discrepancies_found": discrepancies_found,
                     "auto_healed": auto_healed,
                     "flagged_for_review": flagged_for_review,
@@ -458,6 +484,7 @@ class ReconciliationService(BaseService):
                     completed_at=completed_at,
                     payment_orders_checked=payment_orders_checked,
                     payouts_checked=payouts_checked,
+                    subscriptions_checked=subscriptions_checked,
                     discrepancies_found=discrepancies_found,
                     auto_healed=auto_healed,
                     flagged_for_review=flagged_for_review,
@@ -901,6 +928,235 @@ class ReconciliationService(BaseService):
         return None
 
     # =========================================================================
+    # Internal: Subscription Reconciliation
+    # =========================================================================
+
+    @classmethod
+    def _reconcile_subscriptions(
+        cls,
+        run_id: uuid.UUID,
+        lookback_hours: int,
+        limit: int,
+    ) -> tuple[list[HealingResult], int]:
+        """
+        Reconcile Subscriptions within the lookback window.
+
+        Compares local Subscription state against Stripe's source of truth.
+        Also detects missed invoice.paid webhooks for subscriptions.
+
+        Returns tuple of (healing_results, total_checked).
+        """
+        cutoff = timezone.now() - timedelta(hours=lookback_hours)
+
+        # Get Subscriptions in reconcilable states (not already cancelled)
+        subscriptions = Subscription.objects.filter(
+            state__in=[
+                SubscriptionState.PENDING,
+                SubscriptionState.ACTIVE,
+                SubscriptionState.PAST_DUE,
+            ],
+            created_at__gte=cutoff,
+        ).order_by("created_at")[:limit]
+
+        results: list[HealingResult] = []
+        total_checked = 0
+
+        for subscription in subscriptions:
+            total_checked += 1
+
+            try:
+                discrepancy = cls._check_subscription(subscription)
+                if discrepancy:
+                    result = cls._heal_discrepancy(discrepancy, run_id)
+                    results.append(result)
+
+                    # Persist discrepancy record
+                    cls._record_discrepancy(run_id, discrepancy, result)
+
+            except (StripeRateLimitError, StripeAPIUnavailableError) as e:
+                cls.get_logger().warning(
+                    "Stripe API error during subscription reconciliation, skipping",
+                    extra={
+                        "subscription_id": str(subscription.id),
+                        "error": str(e),
+                    },
+                )
+                continue
+
+            except Exception as e:
+                cls.get_logger().error(
+                    "Error reconciling subscription",
+                    extra={
+                        "subscription_id": str(subscription.id),
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
+                continue
+
+        # Phase 2: Check for missed invoice.paid webhooks
+        missed_invoice_results = cls._check_missed_subscription_invoices(
+            run_id=run_id,
+            lookback_hours=lookback_hours,
+        )
+        results.extend(missed_invoice_results)
+
+        return results, total_checked
+
+    @classmethod
+    def _check_subscription(
+        cls,
+        subscription: Subscription,
+    ) -> Discrepancy | None:
+        """
+        Check a single Subscription for discrepancies.
+
+        Returns Discrepancy if found, None otherwise.
+        """
+        # Skip if no Stripe subscription ID
+        if not subscription.stripe_subscription_id:
+            return None
+
+        # Fetch current state from Stripe
+        adapter = cls.get_stripe_adapter()
+        try:
+            sub_result = adapter.retrieve_subscription(
+                subscription.stripe_subscription_id,
+            )
+        except Exception as e:
+            cls.get_logger().warning(
+                "Failed to retrieve Subscription from Stripe",
+                extra={
+                    "subscription_id": str(subscription.id),
+                    "stripe_subscription_id": subscription.stripe_subscription_id,
+                    "error": str(e),
+                },
+            )
+            raise
+
+        stripe_status = sub_result.status
+
+        # Check for state discrepancies
+        if subscription.state == SubscriptionState.ACTIVE:
+            # Active locally but cancelled in Stripe
+            if stripe_status in ("canceled", "cancelled"):
+                return Discrepancy(
+                    discrepancy_type=DiscrepancyType.STRIPE_SUBSCRIPTION_CANCELLED_LOCAL_ACTIVE,
+                    entity_type="subscription",
+                    entity_id=subscription.id,
+                    stripe_id=subscription.stripe_subscription_id,
+                    local_state=subscription.state,
+                    stripe_state=stripe_status,
+                    details={
+                        "payer_id": str(subscription.payer_id),
+                        "recipient_profile_id": str(subscription.recipient_profile_id),
+                    },
+                )
+
+        elif subscription.state == SubscriptionState.CANCELLED:
+            # Cancelled locally but active in Stripe
+            if stripe_status in ("active", "trialing"):
+                return Discrepancy(
+                    discrepancy_type=DiscrepancyType.STRIPE_SUBSCRIPTION_ACTIVE_LOCAL_CANCELLED,
+                    entity_type="subscription",
+                    entity_id=subscription.id,
+                    stripe_id=subscription.stripe_subscription_id,
+                    local_state=subscription.state,
+                    stripe_state=stripe_status,
+                    details={
+                        "payer_id": str(subscription.payer_id),
+                        "recipient_profile_id": str(subscription.recipient_profile_id),
+                    },
+                )
+
+        return None
+
+    @classmethod
+    def _check_missed_subscription_invoices(
+        cls,
+        run_id: uuid.UUID,
+        lookback_hours: int,
+    ) -> list[HealingResult]:
+        """
+        Check for paid Stripe invoices that have no corresponding PaymentOrder.
+
+        This detects missed invoice.paid webhooks.
+        """
+        adapter = cls.get_stripe_adapter()
+        lookback = timezone.now() - timedelta(hours=lookback_hours)
+
+        results: list[HealingResult] = []
+
+        # Get all local subscriptions with Stripe IDs
+        subscriptions = Subscription.objects.filter(
+            stripe_subscription_id__isnull=False,
+            state__in=[SubscriptionState.ACTIVE, SubscriptionState.PAST_DUE],
+        ).values_list("stripe_subscription_id", flat=True)
+
+        local_sub_ids = set(subscriptions)
+
+        if not local_sub_ids:
+            return results
+
+        # Get recent subscriptions from Stripe to check for paid invoices
+        try:
+            stripe_subscriptions = adapter.list_recent_subscriptions(
+                created_after=lookback,
+                limit=100,
+            )
+        except Exception as e:
+            cls.get_logger().warning(
+                "Failed to list subscriptions from Stripe",
+                extra={"error": str(e)},
+            )
+            return results
+
+        # For each subscription, check if there are paid invoices without PaymentOrders
+        for stripe_sub in stripe_subscriptions:
+            if stripe_sub.id not in local_sub_ids:
+                continue
+
+            latest_invoice_id = stripe_sub.latest_invoice_id
+            if not latest_invoice_id:
+                continue
+
+            # Check if we have a PaymentOrder for this invoice
+            existing_order = PaymentOrder.objects.filter(
+                stripe_invoice_id=latest_invoice_id,
+            ).exists()
+
+            if not existing_order:
+                # Get local subscription
+                try:
+                    local_sub = Subscription.objects.get(
+                        stripe_subscription_id=stripe_sub.id,
+                    )
+                except Subscription.DoesNotExist:
+                    continue
+
+                discrepancy = Discrepancy(
+                    discrepancy_type=DiscrepancyType.STRIPE_INVOICE_PAID_NO_LOCAL_ORDER,
+                    entity_type="subscription",
+                    entity_id=local_sub.id,
+                    stripe_id=latest_invoice_id,
+                    local_state=local_sub.state,
+                    stripe_state="paid",
+                    details={
+                        "stripe_subscription_id": stripe_sub.id,
+                        "invoice_id": latest_invoice_id,
+                        "payer_id": str(local_sub.payer_id),
+                    },
+                )
+
+                result = cls._heal_discrepancy(discrepancy, run_id)
+                results.append(result)
+
+                # Persist discrepancy record
+                cls._record_discrepancy(run_id, discrepancy, result)
+
+        return results
+
+    # =========================================================================
     # Internal: Healing Logic
     # =========================================================================
 
@@ -971,6 +1227,11 @@ class ReconciliationService(BaseService):
             DiscrepancyType.STRIPE_TRANSFER_PAID_LOCAL_SCHEDULED: cls._heal_payout_complete,
             DiscrepancyType.STRIPE_TRANSFER_FAILED_LOCAL_PROCESSING: cls._flag_for_review,
             DiscrepancyType.PAYOUT_STUCK_IN_PROCESSING: cls._flag_for_review,
+            # Subscription healers
+            DiscrepancyType.STRIPE_SUBSCRIPTION_CANCELLED_LOCAL_ACTIVE: cls._heal_subscription_cancelled,
+            DiscrepancyType.STRIPE_SUBSCRIPTION_ACTIVE_LOCAL_CANCELLED: cls._flag_for_review,
+            DiscrepancyType.STRIPE_INVOICE_PAID_NO_LOCAL_ORDER: cls._flag_for_review,
+            DiscrepancyType.SUBSCRIPTION_LOCAL_MISSING: cls._flag_for_review,
         }
 
         healer = healers.get(discrepancy.discrepancy_type, cls._flag_for_review)
@@ -1274,6 +1535,65 @@ class ReconciliationService(BaseService):
                     details={
                         "payout_id": str(payout.id),
                         "current_state": payout.state,
+                    },
+                )
+
+    @classmethod
+    def _heal_subscription_cancelled(
+        cls,
+        discrepancy: Discrepancy,
+        run_id: uuid.UUID | None,
+    ) -> HealingResult:
+        """
+        Heal Subscription where Stripe subscription is cancelled but we show ACTIVE.
+
+        Transitions: ACTIVE -> CANCELLED
+        """
+        with transaction.atomic():
+            subscription = Subscription.objects.select_for_update().get(
+                id=discrepancy.entity_id
+            )
+
+            # Re-verify discrepancy still exists
+            if subscription.state == SubscriptionState.CANCELLED:
+                cls.get_logger().info(
+                    "Subscription state already cancelled, skipping heal",
+                    extra={
+                        "subscription_id": str(subscription.id),
+                        "current_state": subscription.state,
+                    },
+                )
+                return HealingResult(
+                    discrepancy=discrepancy,
+                    resolution=DiscrepancyResolution.AUTO_HEALED,
+                    action_taken="State already transitioned (likely by webhook)",
+                )
+
+            try:
+                subscription.cancel()
+                subscription.cancelled_at = timezone.now()
+                subscription.save()
+
+                cls.get_logger().info(
+                    "Healed subscription: ACTIVE -> CANCELLED",
+                    extra={
+                        "subscription_id": str(subscription.id),
+                        "run_id": str(run_id) if run_id else None,
+                    },
+                )
+
+                return HealingResult(
+                    discrepancy=discrepancy,
+                    resolution=DiscrepancyResolution.AUTO_HEALED,
+                    action_taken="Transitioned subscription from ACTIVE to CANCELLED",
+                )
+
+            except TransitionNotAllowed as e:
+                raise HealingError(
+                    f"State transition not allowed: {e}",
+                    details={
+                        "subscription_id": str(subscription.id),
+                        "current_state": subscription.state,
                     },
                 )
 

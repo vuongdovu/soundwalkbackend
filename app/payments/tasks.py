@@ -326,3 +326,161 @@ from payments.workers import (  # noqa: E402, F401
     release_single_hold,
     retry_failed_payouts,
 )
+
+
+# =============================================================================
+# Monthly Subscription Payout Task
+# =============================================================================
+
+# Default minimum balance required to trigger a payout (in cents)
+DEFAULT_MINIMUM_PAYOUT_AMOUNT = 1000  # $10.00
+
+
+@shared_task
+def create_monthly_subscription_payouts(
+    minimum_payout_amount: int = DEFAULT_MINIMUM_PAYOUT_AMOUNT,
+) -> dict:
+    """
+    Monthly task to create payouts for subscription revenue.
+
+    Aggregates USER_BALANCE for all mentors with connected accounts and
+    creates Payout records for balances exceeding the minimum threshold.
+
+    This task should be scheduled via celery-beat to run on the 1st of
+    each month at 00:00 UTC:
+
+        'create-monthly-subscription-payouts': {
+            'task': 'payments.tasks.create_monthly_subscription_payouts',
+            'schedule': crontab(day_of_month='1', hour='0', minute='0'),
+        }
+
+    Flow:
+    1. Query all ConnectedAccounts with payouts_enabled=True
+    2. For each, get USER_BALANCE via LedgerService
+    3. If balance >= minimum_payout_amount, create Payout
+    4. PayoutService.execute_payout handles Stripe transfer
+
+    Args:
+        minimum_payout_amount: Minimum balance to trigger payout (cents)
+
+    Returns:
+        Dict with stats about payouts created
+    """
+    from django.conf import settings as django_settings
+
+    from payments.ledger import LedgerService
+    from payments.ledger.models import AccountType
+    from payments.models import ConnectedAccount, Payout
+    from payments.state_machines import OnboardingStatus
+
+    # Get threshold from settings or use default
+    threshold = getattr(
+        django_settings,
+        "MINIMUM_PAYOUT_AMOUNT_CENTS",
+        minimum_payout_amount,
+    )
+
+    logger.info(
+        "Starting monthly subscription payout creation",
+        extra={"minimum_payout_amount": threshold},
+    )
+
+    # Find all connected accounts eligible for payouts
+    eligible_accounts = ConnectedAccount.objects.filter(
+        onboarding_status=OnboardingStatus.COMPLETE,
+        payouts_enabled=True,
+    )
+
+    stats = {
+        "accounts_checked": 0,
+        "payouts_created": 0,
+        "total_payout_amount": 0,
+        "accounts_below_threshold": 0,
+        "errors": 0,
+    }
+
+    now = timezone.now()
+    period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Period end is the last day of the previous month
+    period_end = period_start - timedelta(days=1)
+
+    for account in eligible_accounts:
+        stats["accounts_checked"] += 1
+
+        try:
+            # Get USER_BALANCE account if it exists
+            balance_account = LedgerService.get_account_by_owner(
+                AccountType.USER_BALANCE,
+                owner_id=account.profile_id,
+                currency="usd",
+            )
+
+            if not balance_account:
+                # No balance account = no subscription revenue
+                logger.debug(
+                    "No balance account for connected account",
+                    extra={"connected_account_id": str(account.id)},
+                )
+                continue
+
+            # Get current balance
+            balance = LedgerService.get_balance(balance_account.id)
+
+            if balance.cents < threshold:
+                stats["accounts_below_threshold"] += 1
+                logger.debug(
+                    "Balance below threshold",
+                    extra={
+                        "connected_account_id": str(account.id),
+                        "balance_cents": balance.cents,
+                        "threshold": threshold,
+                    },
+                )
+                continue
+
+            # Create payout for the full balance
+            payout = Payout.objects.create(
+                connected_account=account,
+                amount_cents=balance.cents,
+                currency="usd",
+                payment_order=None,  # Aggregated payout, not linked to single order
+                metadata={
+                    "aggregation_type": "monthly_subscription",
+                    "period_start": period_start.isoformat(),
+                    "period_end": period_end.isoformat(),
+                    "source": "subscription_renewals",
+                },
+            )
+
+            stats["payouts_created"] += 1
+            stats["total_payout_amount"] += balance.cents
+
+            logger.info(
+                "Created monthly subscription payout",
+                extra={
+                    "payout_id": str(payout.id),
+                    "connected_account_id": str(account.id),
+                    "amount_cents": balance.cents,
+                },
+            )
+
+            # Queue the payout for execution
+            execute_single_payout.delay(str(payout.id))
+
+        except Exception as e:
+            stats["errors"] += 1
+            logger.error(
+                f"Error processing monthly payout for account: {e}",
+                extra={
+                    "connected_account_id": str(account.id),
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
+
+    logger.info(
+        "Monthly subscription payout creation completed",
+        extra=stats,
+    )
+
+    return stats

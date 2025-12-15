@@ -180,6 +180,113 @@ class RefundResult:
 
 
 # =============================================================================
+# Subscription Data Types
+# =============================================================================
+
+
+@dataclass
+class CreateCustomerParams:
+    """
+    Parameters for creating a Stripe Customer.
+
+    Attributes:
+        email: Customer email address
+        idempotency_key: Unique key for idempotent creation
+        metadata: Key-value pairs to attach to the Customer
+        name: Optional customer name
+    """
+
+    email: str
+    idempotency_key: str
+    metadata: dict[str, str] = field(default_factory=dict)
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate parameters after initialization."""
+        if not self.email:
+            raise ValueError("email is required")
+        if not self.idempotency_key:
+            raise ValueError("idempotency_key is required")
+
+
+@dataclass
+class CustomerResult:
+    """
+    Result from Stripe Customer operations.
+
+    Attributes:
+        id: Customer ID (cus_xxx)
+        email: Customer email
+        name: Customer name (if provided)
+        metadata: Attached metadata
+        raw_response: Full Stripe response dict
+    """
+
+    id: str
+    email: str
+    name: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CreateSubscriptionParams:
+    """
+    Parameters for creating a Stripe Subscription.
+
+    Attributes:
+        customer_id: Stripe Customer ID (cus_xxx)
+        price_id: Stripe Price ID (price_xxx)
+        idempotency_key: Unique key for idempotent creation
+        metadata: Key-value pairs to attach to the Subscription
+        payment_behavior: 'default_incomplete', 'error_if_incomplete', etc.
+    """
+
+    customer_id: str
+    price_id: str
+    idempotency_key: str
+    metadata: dict[str, str] = field(default_factory=dict)
+    payment_behavior: str = "default_incomplete"
+
+    def __post_init__(self) -> None:
+        """Validate parameters after initialization."""
+        if not self.customer_id:
+            raise ValueError("customer_id is required")
+        if not self.price_id:
+            raise ValueError("price_id is required")
+        if not self.idempotency_key:
+            raise ValueError("idempotency_key is required")
+
+
+@dataclass
+class SubscriptionResult:
+    """
+    Result from Stripe Subscription operations.
+
+    Attributes:
+        id: Subscription ID (sub_xxx)
+        status: Subscription status (active, past_due, canceled, etc.)
+        customer_id: Stripe Customer ID
+        current_period_start: Start of current billing period (Unix timestamp)
+        current_period_end: End of current billing period (Unix timestamp)
+        cancel_at_period_end: Whether scheduled for cancellation
+        latest_invoice_id: Most recent invoice ID
+        metadata: Attached metadata
+        raw_response: Full Stripe response dict
+    """
+
+    id: str
+    status: str
+    customer_id: str
+    current_period_start: int
+    current_period_end: int
+    cancel_at_period_end: bool = False
+    latest_invoice_id: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+# =============================================================================
 # Idempotency Key Generator
 # =============================================================================
 
@@ -899,6 +1006,436 @@ class StripeAdapter:
                     raw_response=transfer.to_dict(),
                 )
                 for transfer in transfers.data
+            ]
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    # =========================================================================
+    # Customer Operations
+    # =========================================================================
+
+    @classmethod
+    def create_customer(
+        cls,
+        params: CreateCustomerParams,
+        trace_id: str | None = None,
+    ) -> CustomerResult:
+        """
+        Create a Stripe Customer.
+
+        Args:
+            params: Parameters for creating the Customer
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            CustomerResult with Customer details
+
+        Raises:
+            StripeInvalidRequestError: Invalid parameters
+            StripeAPIUnavailableError: Stripe service unavailable
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        log_context = {
+            "operation": "create_customer",
+            "email": params.email,
+            "idempotency_key": params.idempotency_key,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.info("Starting Stripe operation", extra=log_context)
+
+        try:
+            customer_params: dict[str, Any] = {
+                "email": params.email,
+                "metadata": params.metadata,
+            }
+            if params.name:
+                customer_params["name"] = params.name
+
+            customer = stripe.Customer.create(
+                idempotency_key=params.idempotency_key,
+                **customer_params,
+            )
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "customer_id": customer.id,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return CustomerResult(
+                id=customer.id,
+                email=customer.email,
+                name=customer.name,
+                metadata=dict(customer.metadata or {}),
+                raw_response=customer.to_dict(),
+            )
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    @classmethod
+    def get_or_create_customer(
+        cls,
+        email: str,
+        user_id: str,
+        trace_id: str | None = None,
+    ) -> CustomerResult:
+        """
+        Get existing customer by email or create a new one.
+
+        Args:
+            email: Customer email
+            user_id: User ID for idempotency and metadata
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            CustomerResult for existing or newly created customer
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        log_context = {
+            "operation": "get_or_create_customer",
+            "email": email,
+            "user_id": user_id,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.info("Starting Stripe operation", extra=log_context)
+
+        try:
+            # Search for existing customer
+            customers = stripe.Customer.list(email=email, limit=1)
+
+            if customers.data:
+                customer = customers.data[0]
+                duration_ms = (time.time() - start_time) * 1000
+                logger.info(
+                    "Found existing customer",
+                    extra={
+                        **log_context,
+                        "customer_id": customer.id,
+                        "duration_ms": duration_ms,
+                    },
+                )
+                return CustomerResult(
+                    id=customer.id,
+                    email=customer.email,
+                    name=customer.name,
+                    metadata=dict(customer.metadata or {}),
+                    raw_response=customer.to_dict(),
+                )
+
+            # Create new customer
+            idempotency_key = IdempotencyKeyGenerator.generate(
+                operation="create_customer",
+                entity_id=user_id,
+            )
+
+            return cls.create_customer(
+                CreateCustomerParams(
+                    email=email,
+                    idempotency_key=idempotency_key,
+                    metadata={"user_id": user_id},
+                ),
+                trace_id=trace_id,
+            )
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    # =========================================================================
+    # Subscription Operations
+    # =========================================================================
+
+    @classmethod
+    def create_subscription(
+        cls,
+        params: CreateSubscriptionParams,
+        trace_id: str | None = None,
+    ) -> SubscriptionResult:
+        """
+        Create a Stripe Subscription.
+
+        Args:
+            params: Parameters for creating the Subscription
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            SubscriptionResult with Subscription details
+
+        Raises:
+            StripeInvalidRequestError: Invalid parameters
+            StripeAPIUnavailableError: Stripe service unavailable
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        log_context = {
+            "operation": "create_subscription",
+            "customer_id": params.customer_id,
+            "price_id": params.price_id,
+            "idempotency_key": params.idempotency_key,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.info("Starting Stripe operation", extra=log_context)
+
+        try:
+            subscription = stripe.Subscription.create(
+                customer=params.customer_id,
+                items=[{"price": params.price_id}],
+                metadata=params.metadata,
+                payment_behavior=params.payment_behavior,
+                idempotency_key=params.idempotency_key,
+            )
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "subscription_id": subscription.id,
+                    "status": subscription.status,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return SubscriptionResult(
+                id=subscription.id,
+                status=subscription.status,
+                customer_id=subscription.customer,
+                current_period_start=subscription.current_period_start,
+                current_period_end=subscription.current_period_end,
+                cancel_at_period_end=subscription.cancel_at_period_end,
+                latest_invoice_id=subscription.latest_invoice,
+                metadata=dict(subscription.metadata or {}),
+                raw_response=subscription.to_dict(),
+            )
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    @classmethod
+    def cancel_subscription(
+        cls,
+        subscription_id: str,
+        idempotency_key: str,
+        cancel_at_period_end: bool = True,
+        trace_id: str | None = None,
+    ) -> SubscriptionResult:
+        """
+        Cancel a Stripe Subscription.
+
+        Args:
+            subscription_id: Stripe Subscription ID (sub_xxx)
+            idempotency_key: Unique key for idempotent cancellation
+            cancel_at_period_end: If True, cancel at end of period (default)
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            SubscriptionResult with updated Subscription details
+
+        Raises:
+            StripeInvalidRequestError: Subscription not found
+            StripeAPIUnavailableError: Stripe service unavailable
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        log_context = {
+            "operation": "cancel_subscription",
+            "subscription_id": subscription_id,
+            "cancel_at_period_end": cancel_at_period_end,
+            "idempotency_key": idempotency_key,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.info("Starting Stripe operation", extra=log_context)
+
+        try:
+            if cancel_at_period_end:
+                # Schedule cancellation at period end
+                subscription = stripe.Subscription.modify(
+                    subscription_id,
+                    cancel_at_period_end=True,
+                )
+            else:
+                # Immediate cancellation
+                subscription = stripe.Subscription.cancel(
+                    subscription_id,
+                )
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "status": subscription.status,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return SubscriptionResult(
+                id=subscription.id,
+                status=subscription.status,
+                customer_id=subscription.customer,
+                current_period_start=subscription.current_period_start,
+                current_period_end=subscription.current_period_end,
+                cancel_at_period_end=subscription.cancel_at_period_end,
+                latest_invoice_id=subscription.latest_invoice,
+                metadata=dict(subscription.metadata or {}),
+                raw_response=subscription.to_dict(),
+            )
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    @classmethod
+    def retrieve_subscription(
+        cls,
+        subscription_id: str,
+        trace_id: str | None = None,
+    ) -> SubscriptionResult:
+        """
+        Retrieve a Subscription by ID.
+
+        Args:
+            subscription_id: Stripe Subscription ID (sub_xxx)
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            SubscriptionResult with Subscription details
+
+        Raises:
+            StripeInvalidRequestError: Subscription not found
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        log_context = {
+            "operation": "retrieve_subscription",
+            "subscription_id": subscription_id,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.debug("Starting Stripe operation", extra=log_context)
+
+        try:
+            subscription = stripe.Subscription.retrieve(subscription_id)
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.debug(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "status": subscription.status,
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return SubscriptionResult(
+                id=subscription.id,
+                status=subscription.status,
+                customer_id=subscription.customer,
+                current_period_start=subscription.current_period_start,
+                current_period_end=subscription.current_period_end,
+                cancel_at_period_end=subscription.cancel_at_period_end,
+                latest_invoice_id=subscription.latest_invoice,
+                metadata=dict(subscription.metadata or {}),
+                raw_response=subscription.to_dict(),
+            )
+
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            cls._handle_stripe_error(e, log_context, duration_ms)
+            raise
+
+    @classmethod
+    def list_recent_subscriptions(
+        cls,
+        created_after: datetime,
+        limit: int = 100,
+        trace_id: str | None = None,
+    ) -> list[SubscriptionResult]:
+        """
+        List recent Subscriptions for reconciliation.
+
+        Args:
+            created_after: Only return Subscriptions created after this time
+            limit: Maximum number to return (default: 100, max: 100)
+            trace_id: Optional trace ID for distributed tracing
+
+        Returns:
+            List of SubscriptionResult objects
+        """
+        cls._configure_stripe()
+        logger = cls.get_logger()
+
+        created_timestamp = int(created_after.timestamp())
+
+        log_context = {
+            "operation": "list_recent_subscriptions",
+            "created_after": created_timestamp,
+            "limit": limit,
+            "trace_id": trace_id,
+        }
+
+        start_time = time.time()
+        logger.info("Starting Stripe operation", extra=log_context)
+
+        try:
+            subscriptions = stripe.Subscription.list(
+                created={"gte": created_timestamp},
+                limit=min(limit, 100),
+            )
+
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(
+                "Stripe operation completed",
+                extra={
+                    **log_context,
+                    "count": len(subscriptions.data),
+                    "duration_ms": duration_ms,
+                },
+            )
+
+            return [
+                SubscriptionResult(
+                    id=sub.id,
+                    status=sub.status,
+                    customer_id=sub.customer,
+                    current_period_start=sub.current_period_start,
+                    current_period_end=sub.current_period_end,
+                    cancel_at_period_end=sub.cancel_at_period_end,
+                    latest_invoice_id=sub.latest_invoice,
+                    metadata=dict(sub.metadata or {}),
+                    raw_response=sub.to_dict(),
+                )
+                for sub in subscriptions.data
             ]
 
         except Exception as e:

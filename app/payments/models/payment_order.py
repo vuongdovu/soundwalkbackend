@@ -151,6 +151,19 @@ class PaymentOrder(UUIDPrimaryKeyMixin, BaseModel):
     )
 
     # ==========================================================================
+    # Subscription Relationship (for recurring payments)
+    # ==========================================================================
+
+    subscription = models.ForeignKey(
+        "payments.Subscription",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="payment_orders",
+        help_text="Subscription this payment belongs to (for recurring payments)",
+    )
+
+    # ==========================================================================
     # Stripe Integration
     # ==========================================================================
 
@@ -161,6 +174,15 @@ class PaymentOrder(UUIDPrimaryKeyMixin, BaseModel):
         unique=True,
         db_index=True,
         help_text="Stripe PaymentIntent ID (pi_xxx)",
+    )
+
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+        help_text="Stripe Invoice ID (in_xxx) - for subscription payments",
     )
 
     # ==========================================================================
@@ -246,6 +268,7 @@ class PaymentOrder(UUIDPrimaryKeyMixin, BaseModel):
             models.Index(fields=["reference_type", "reference_id"]),
             models.Index(fields=["payer", "state"]),
             models.Index(fields=["payer", "created_at"]),
+            models.Index(fields=["subscription", "state"]),
         ]
         constraints = [
             models.CheckConstraint(

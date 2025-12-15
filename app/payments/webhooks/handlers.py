@@ -33,13 +33,22 @@ from core.services import ServiceResult
 from payments.ledger import LedgerService
 from payments.ledger.models import AccountType, EntryType
 from payments.ledger.types import RecordEntryParams
-from payments.models import ConnectedAccount, PaymentOrder, Payout, Refund, WebhookEvent
+from payments.models import (
+    ConnectedAccount,
+    PaymentOrder,
+    Payout,
+    Refund,
+    Subscription,
+    WebhookEvent,
+)
 from payments.services import PaymentOrchestrator
 from payments.state_machines import (
     OnboardingStatus,
     PaymentOrderState,
+    PaymentStrategyType,
     PayoutState,
     RefundState,
+    SubscriptionState,
 )
 
 if TYPE_CHECKING:
@@ -1015,3 +1024,485 @@ def handle_account_updated(webhook_event: WebhookEvent) -> ServiceResult:
         )
 
         return ServiceResult.success(connected_account)
+
+
+# =============================================================================
+# Subscription Invoice Handlers
+# =============================================================================
+
+
+@register_handler("invoice.paid")
+def handle_invoice_paid(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle successful invoice payment for subscriptions.
+
+    Called when Stripe sends invoice.paid webhook for subscription billing.
+    This handler:
+    1. Skips non-subscription invoices
+    2. Finds or creates the PaymentOrder for this invoice
+    3. Transitions PaymentOrder through states to SETTLED
+    4. Records ledger entries (payment, fee, mentor credit)
+    5. Updates subscription state (activates on first payment, reactivates if past_due)
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    from datetime import datetime, timezone as dt_tz
+
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    invoice_id = data_object.get("id")
+    subscription_id = data_object.get("subscription")
+    amount_paid = data_object.get("amount_paid", 0)
+    currency = data_object.get("currency", "usd")
+    period_start = data_object.get("period_start")
+    period_end = data_object.get("period_end")
+
+    # Skip non-subscription invoices
+    if not subscription_id:
+        logger.info(
+            "invoice.paid: Not a subscription invoice, skipping",
+            extra={
+                "stripe_event_id": webhook_event.stripe_event_id,
+                "invoice_id": invoice_id,
+            },
+        )
+        return ServiceResult.success(None)
+
+    logger.info(
+        "Processing invoice.paid for subscription",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "invoice_id": invoice_id,
+            "subscription_id": subscription_id,
+            "amount_paid": amount_paid,
+        },
+    )
+
+    with transaction.atomic():
+        # Check for idempotency - PaymentOrder with this invoice_id already exists
+        existing_order = PaymentOrder.objects.filter(
+            stripe_invoice_id=invoice_id
+        ).first()
+
+        if existing_order:
+            logger.info(
+                "PaymentOrder already exists for this invoice (idempotent)",
+                extra={
+                    "payment_order_id": str(existing_order.id),
+                    "invoice_id": invoice_id,
+                },
+            )
+            return ServiceResult.success(existing_order)
+
+        # Find the subscription
+        subscription = (
+            Subscription.objects.select_for_update()
+            .filter(stripe_subscription_id=subscription_id)
+            .first()
+        )
+
+        if not subscription:
+            logger.error(
+                "Subscription not found for invoice.paid",
+                extra={
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                    "subscription_id": subscription_id,
+                    "invoice_id": invoice_id,
+                },
+            )
+            return ServiceResult.failure(
+                f"Subscription not found: {subscription_id}",
+                error_code="SUBSCRIPTION_NOT_FOUND",
+            )
+
+        # Create PaymentOrder for this invoice
+        order = PaymentOrder.objects.create(
+            payer=subscription.payer,
+            amount_cents=amount_paid,
+            currency=currency,
+            strategy_type=PaymentStrategyType.SUBSCRIPTION,
+            subscription=subscription,
+            stripe_invoice_id=invoice_id,
+            reference_id=subscription.recipient_profile_id,
+            reference_type="subscription",
+            metadata={
+                "subscription_id": str(subscription.id),
+                "billing_reason": data_object.get("billing_reason"),
+            },
+        )
+
+        # Transition to PENDING
+        order.submit()
+        order.save()
+
+        # Get strategy and handle success
+        strategy = PaymentOrchestrator.get_strategy_for_order(order)
+        result = strategy.handle_payment_succeeded(order, payload)
+
+        if not result.success:
+            logger.error(
+                "Failed to process invoice.paid",
+                extra={
+                    "payment_order_id": str(order.id),
+                    "error": result.error,
+                },
+            )
+            return result
+
+        # Update subscription period dates
+        if period_start and period_end:
+            subscription.current_period_start = datetime.fromtimestamp(
+                period_start, tz=dt_tz.utc
+            )
+            subscription.current_period_end = datetime.fromtimestamp(
+                period_end, tz=dt_tz.utc
+            )
+            subscription.save(
+                update_fields=["current_period_start", "current_period_end"]
+            )
+
+        logger.info(
+            "invoice.paid processed successfully",
+            extra={
+                "payment_order_id": str(order.id),
+                "subscription_id": str(subscription.id),
+                "subscription_state": subscription.state,
+            },
+        )
+
+        return ServiceResult.success(order)
+
+
+@register_handler("invoice.payment_failed")
+def handle_invoice_payment_failed(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle failed invoice payment for subscriptions.
+
+    Called when Stripe sends invoice.payment_failed webhook. This marks
+    the subscription as past_due. Stripe Smart Retries will attempt to
+    collect payment - we don't implement custom retry logic.
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    invoice_id = data_object.get("id")
+    subscription_id = data_object.get("subscription")
+    attempt_count = data_object.get("attempt_count", 1)
+
+    # Skip non-subscription invoices
+    if not subscription_id:
+        logger.info(
+            "invoice.payment_failed: Not a subscription invoice, skipping",
+            extra={
+                "stripe_event_id": webhook_event.stripe_event_id,
+                "invoice_id": invoice_id,
+            },
+        )
+        return ServiceResult.success(None)
+
+    # Extract failure reason
+    last_error = data_object.get("last_finalization_error", {})
+    reason = last_error.get("message", "Payment failed")
+
+    logger.info(
+        "Processing invoice.payment_failed",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "invoice_id": invoice_id,
+            "subscription_id": subscription_id,
+            "attempt_count": attempt_count,
+            "reason": reason,
+        },
+    )
+
+    with transaction.atomic():
+        # Find the subscription
+        subscription = (
+            Subscription.objects.select_for_update()
+            .filter(stripe_subscription_id=subscription_id)
+            .first()
+        )
+
+        if not subscription:
+            logger.error(
+                "Subscription not found for invoice.payment_failed",
+                extra={
+                    "stripe_event_id": webhook_event.stripe_event_id,
+                    "subscription_id": subscription_id,
+                },
+            )
+            return ServiceResult.failure(
+                f"Subscription not found: {subscription_id}",
+                error_code="SUBSCRIPTION_NOT_FOUND",
+            )
+
+        # Mark subscription as past_due if active
+        if subscription.state == SubscriptionState.ACTIVE:
+            subscription.mark_past_due()
+            subscription.save()
+            logger.info(
+                "Subscription marked as past_due",
+                extra={
+                    "subscription_id": str(subscription.id),
+                    "attempt_count": attempt_count,
+                },
+            )
+        elif subscription.state == SubscriptionState.PAST_DUE:
+            # Already past_due - idempotent
+            logger.info(
+                "Subscription already past_due",
+                extra={"subscription_id": str(subscription.id)},
+            )
+
+        return ServiceResult.success(subscription)
+
+
+# =============================================================================
+# Subscription Lifecycle Handlers
+# =============================================================================
+
+
+@register_handler("customer.subscription.created")
+def handle_subscription_created(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle subscription creation notification.
+
+    Called when Stripe sends customer.subscription.created webhook.
+    This can arrive after our create_subscription call or for externally
+    created subscriptions.
+
+    For subscriptions we created, this handler updates the local record
+    if it exists. For external subscriptions, we log and succeed gracefully.
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    subscription_id = data_object.get("id")
+    customer_id = data_object.get("customer")
+    status = data_object.get("status")
+
+    logger.info(
+        "Processing customer.subscription.created",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "subscription_id": subscription_id,
+            "customer_id": customer_id,
+            "status": status,
+        },
+    )
+
+    with transaction.atomic():
+        subscription = Subscription.objects.filter(
+            stripe_subscription_id=subscription_id
+        ).first()
+
+        if not subscription:
+            # This could be an external subscription not created through our system
+            logger.info(
+                "Subscription not found, may be external",
+                extra={"subscription_id": subscription_id},
+            )
+            return ServiceResult.success(None)
+
+        # Update subscription if needed based on Stripe status
+        # (We might receive this webhook after our create_subscription call)
+        logger.info(
+            "Subscription found, webhook acknowledged",
+            extra={
+                "subscription_id": str(subscription.id),
+                "local_state": subscription.state,
+                "stripe_status": status,
+            },
+        )
+
+        return ServiceResult.success(subscription)
+
+
+@register_handler("customer.subscription.updated")
+def handle_subscription_updated(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle subscription update notification.
+
+    Called when Stripe sends customer.subscription.updated webhook.
+    Syncs important fields from Stripe:
+    - cancel_at_period_end flag
+    - current_period_start/end dates
+    - Status changes
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    from datetime import datetime, timezone as dt_tz
+
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    subscription_id = data_object.get("id")
+    status = data_object.get("status")
+    cancel_at_period_end = data_object.get("cancel_at_period_end", False)
+    period_start = data_object.get("current_period_start")
+    period_end = data_object.get("current_period_end")
+    canceled_at = data_object.get("canceled_at")
+
+    logger.info(
+        "Processing customer.subscription.updated",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "subscription_id": subscription_id,
+            "status": status,
+            "cancel_at_period_end": cancel_at_period_end,
+        },
+    )
+
+    with transaction.atomic():
+        subscription = (
+            Subscription.objects.select_for_update()
+            .filter(stripe_subscription_id=subscription_id)
+            .first()
+        )
+
+        if not subscription:
+            logger.info(
+                "Subscription not found, may be external",
+                extra={"subscription_id": subscription_id},
+            )
+            return ServiceResult.success(None)
+
+        # Sync cancel_at_period_end
+        subscription.cancel_at_period_end = cancel_at_period_end
+
+        # Sync period dates
+        if period_start:
+            subscription.current_period_start = datetime.fromtimestamp(
+                period_start, tz=dt_tz.utc
+            )
+        if period_end:
+            subscription.current_period_end = datetime.fromtimestamp(
+                period_end, tz=dt_tz.utc
+            )
+
+        # Sync canceled_at if present
+        if canceled_at:
+            subscription.cancelled_at = datetime.fromtimestamp(
+                canceled_at, tz=dt_tz.utc
+            )
+
+        subscription.save()
+
+        logger.info(
+            "Subscription updated from webhook",
+            extra={
+                "subscription_id": str(subscription.id),
+                "cancel_at_period_end": subscription.cancel_at_period_end,
+            },
+        )
+
+        return ServiceResult.success(subscription)
+
+
+@register_handler("customer.subscription.deleted")
+def handle_subscription_deleted(webhook_event: WebhookEvent) -> ServiceResult:
+    """
+    Handle subscription deletion/cancellation notification.
+
+    Called when Stripe sends customer.subscription.deleted webhook.
+    This is triggered when:
+    - Subscription is immediately canceled
+    - Subscription cancels at period end and period has ended
+    - Subscription is deleted (max retries exceeded, etc.)
+
+    Transitions the local subscription to CANCELLED state.
+
+    Args:
+        webhook_event: The WebhookEvent containing the event data
+
+    Returns:
+        ServiceResult with success/failure status
+    """
+    from datetime import datetime, timezone as dt_tz
+
+    payload = webhook_event.payload
+    data_object = payload.get("data", {}).get("object", {})
+
+    subscription_id = data_object.get("id")
+    canceled_at = data_object.get("canceled_at")
+
+    logger.info(
+        "Processing customer.subscription.deleted",
+        extra={
+            "stripe_event_id": webhook_event.stripe_event_id,
+            "subscription_id": subscription_id,
+        },
+    )
+
+    with transaction.atomic():
+        subscription = (
+            Subscription.objects.select_for_update()
+            .filter(stripe_subscription_id=subscription_id)
+            .first()
+        )
+
+        if not subscription:
+            logger.info(
+                "Subscription not found, may be external or already deleted",
+                extra={"subscription_id": subscription_id},
+            )
+            return ServiceResult.success(None)
+
+        # Check if already cancelled
+        if subscription.state == SubscriptionState.CANCELLED:
+            logger.info(
+                "Subscription already cancelled (idempotent)",
+                extra={"subscription_id": str(subscription.id)},
+            )
+            return ServiceResult.success(subscription)
+
+        # Cancel the subscription
+        if subscription.state in [SubscriptionState.ACTIVE, SubscriptionState.PAST_DUE]:
+            subscription.cancel()
+
+            # Set cancelled_at from Stripe if provided
+            if canceled_at:
+                subscription.cancelled_at = datetime.fromtimestamp(
+                    canceled_at, tz=dt_tz.utc
+                )
+
+            subscription.save()
+
+            logger.info(
+                "Subscription cancelled",
+                extra={
+                    "subscription_id": str(subscription.id),
+                    "cancelled_at": str(subscription.cancelled_at),
+                },
+            )
+        elif subscription.state == SubscriptionState.PENDING:
+            # Subscription was cancelled before first payment
+            subscription.cancel()
+            subscription.save()
+            logger.info(
+                "Pending subscription cancelled",
+                extra={"subscription_id": str(subscription.id)},
+            )
+
+        return ServiceResult.success(subscription)
