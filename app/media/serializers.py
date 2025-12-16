@@ -473,3 +473,38 @@ class ChunkedUploadFinalizeResultSerializer(serializers.Serializer):
 
     media_file_id = serializers.UUIDField()
     message = serializers.CharField()
+
+
+# =============================================================================
+# Quota Status Serializer
+# =============================================================================
+
+
+class QuotaStatusSerializer(serializers.Serializer):
+    """
+    Serializer for storage quota status response.
+
+    Provides all quota-related information for the current user:
+    - Bytes used and remaining
+    - Percentage used
+    - Human-readable MB values
+    - Boolean indicating if uploads are allowed
+    """
+
+    total_storage_bytes = serializers.IntegerField(
+        help_text="Total storage used by this user in bytes"
+    )
+    storage_quota_bytes = serializers.IntegerField(
+        help_text="Maximum storage allowed for this user in bytes"
+    )
+    storage_remaining_bytes = serializers.IntegerField(
+        help_text="Remaining storage available in bytes (0 if over quota)"
+    )
+    storage_used_percent = serializers.FloatField(
+        help_text="Percentage of quota used (can exceed 100 if over quota)"
+    )
+    storage_used_mb = serializers.FloatField(help_text="Storage used in megabytes")
+    storage_quota_mb = serializers.FloatField(help_text="Storage quota in megabytes")
+    can_upload = serializers.BooleanField(
+        help_text="Whether the user can upload new files"
+    )

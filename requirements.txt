@@ -64,6 +64,12 @@ Pillow==11.0.0                     # Image processing (required for ImageField)
 python-magic==0.4.27               # Content-based MIME type detection (requires libmagic1)
 
 # -----------------------------------------------------------------------------
+# Cloud Storage (S3)
+# -----------------------------------------------------------------------------
+boto3==1.35.76                     # AWS SDK for S3 chunked uploads
+django-storages[s3]==1.14.4        # S3 storage backend for Django
+
+# -----------------------------------------------------------------------------
 # Security Scanning
 # -----------------------------------------------------------------------------
 pyclamd==0.4.0                     # ClamAV daemon interface for malware scanning

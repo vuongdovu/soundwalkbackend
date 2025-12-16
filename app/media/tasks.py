@@ -1044,6 +1044,158 @@ def cleanup_orphaned_local_temp_dirs() -> dict:
     }
 
 
+# =============================================================================
+# Storage Quota Recalculation Tasks
+# =============================================================================
+
+
+@shared_task
+def recalculate_user_storage_quota(user_id: str) -> dict:
+    """
+    Recalculate a single user's storage quota from actual files.
+
+    Sums file_size from all non-deleted MediaFiles for the user and
+    updates their profile.total_storage_bytes to match.
+
+    Use this to fix quota drift for a specific user, or as part of
+    the batch recalculation process.
+
+    Args:
+        user_id: UUID string of the user to recalculate.
+
+    Returns:
+        Dict with old_bytes, new_bytes, and difference values.
+    """
+    from uuid import UUID
+
+    from django.db.models import Sum
+
+    from authentication.models import User
+
+    # Convert string to UUID
+    try:
+        uid = UUID(user_id)
+    except ValueError:
+        logger.error(
+            "Invalid user_id format for recalculation",
+            extra={"user_id": user_id},
+        )
+        return {"status": "error", "error": "Invalid user_id format"}
+
+    # Load user and profile
+    try:
+        user = User.objects.get(id=uid)
+    except User.DoesNotExist:
+        logger.warning(
+            "User not found for quota recalculation",
+            extra={"user_id": user_id},
+        )
+        return {"status": "not_found", "user_id": user_id}
+
+    # Get profile
+    if not hasattr(user, "profile"):
+        logger.warning(
+            "User has no profile for quota recalculation",
+            extra={"user_id": user_id},
+        )
+        return {"status": "no_profile", "user_id": user_id}
+
+    profile = user.profile
+    old_bytes = profile.total_storage_bytes
+
+    # Calculate actual storage from non-deleted files
+    from media.models import MediaFile
+
+    actual_bytes = (
+        MediaFile.objects.filter(
+            uploader=user,
+            is_deleted=False,
+        ).aggregate(total=Sum("file_size"))["total"]
+        or 0
+    )
+
+    # Update profile if different
+    difference = actual_bytes - old_bytes
+    if difference != 0:
+        profile.total_storage_bytes = actual_bytes
+        profile.save(update_fields=["total_storage_bytes", "updated_at"])
+
+        logger.info(
+            "Recalculated user storage quota",
+            extra={
+                "user_id": user_id,
+                "old_bytes": old_bytes,
+                "new_bytes": actual_bytes,
+                "difference": difference,
+            },
+        )
+    else:
+        logger.debug(
+            "User storage quota already correct",
+            extra={"user_id": user_id, "bytes": actual_bytes},
+        )
+
+    return {
+        "status": "success",
+        "user_id": user_id,
+        "old_bytes": old_bytes,
+        "new_bytes": actual_bytes,
+        "difference": difference,
+    }
+
+
+@shared_task
+def recalculate_all_storage_quotas() -> dict:
+    """
+    Periodic task to recalculate all active users' storage quotas.
+
+    Iterates through all active users and calls recalculate_user_storage_quota
+    for each. Reports total drift and number of corrections made.
+
+    This task should be scheduled via celery-beat, e.g., weekly.
+
+    Returns:
+        Dict with users_processed, corrections_made, and total_drift_bytes.
+    """
+    from authentication.models import User
+
+    # Get all active users with profiles
+    active_users = User.objects.filter(is_active=True).select_related("profile")
+
+    users_processed = 0
+    corrections_made = 0
+    total_drift_bytes = 0
+
+    for user in active_users:
+        if not hasattr(user, "profile"):
+            continue
+
+        result = recalculate_user_storage_quota(str(user.id))
+
+        if result.get("status") == "success":
+            users_processed += 1
+            difference = result.get("difference", 0)
+
+            if difference != 0:
+                corrections_made += 1
+                total_drift_bytes += abs(difference)
+
+    logger.info(
+        "Completed batch storage quota recalculation",
+        extra={
+            "users_processed": users_processed,
+            "corrections_made": corrections_made,
+            "total_drift_bytes": total_drift_bytes,
+        },
+    )
+
+    return {
+        "users_processed": users_processed,
+        "corrections_made": corrections_made,
+        "total_drift_bytes": total_drift_bytes,
+    }
+
+
 @shared_task
 def cleanup_orphaned_s3_multipart_uploads() -> dict:
     """

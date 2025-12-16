@@ -39,11 +39,14 @@ from media.views import (
     MediaFilesSharedWithMeView,
     MediaFileViewView,
     MediaUploadView,
+    QuotaStatusView,
 )
 
 app_name = "media"
 
 urlpatterns = [
+    # Quota Status
+    path("quota/", QuotaStatusView.as_view(), name="quota-status"),
     # Upload
     path("upload/", MediaUploadView.as_view(), name="upload"),
     # File access

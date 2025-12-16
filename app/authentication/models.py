@@ -331,8 +331,8 @@ class Profile(BaseModel):
     )
 
     storage_quota_bytes = models.BigIntegerField(
-        default=5 * 1024 * 1024 * 1024,  # 5GB default
-        help_text="Maximum storage allowed for this user in bytes (default 5GB)",
+        default=25 * 1024 * 1024 * 1024,  # 25GB default
+        help_text="Maximum storage allowed for this user in bytes (default 25GB)",
     )
 
     class Meta:
@@ -397,23 +397,47 @@ class Profile(BaseModel):
 
     def add_storage_usage(self, bytes_used: int) -> None:
         """
-        Add to storage usage (call after successful upload).
+        Atomically add to storage usage (call after successful upload).
+
+        Uses F() expression for database-level atomicity, preventing
+        race conditions when multiple uploads complete concurrently.
+        Without F(), the read-modify-write pattern could cause lost updates:
+        Thread A reads 1000, Thread B reads 1000, both write different values.
 
         Args:
             bytes_used: Number of bytes to add
         """
-        self.total_storage_bytes += bytes_used
-        self.save(update_fields=["total_storage_bytes", "updated_at"])
+        # Use F() expression for atomic increment at database level
+        # This generates: UPDATE ... SET total_storage_bytes = total_storage_bytes + X
+        Profile.objects.filter(pk=self.pk).update(
+            total_storage_bytes=models.F("total_storage_bytes") + bytes_used,
+        )
+        # Refresh instance to get the updated value from database
+        self.refresh_from_db(fields=["total_storage_bytes"])
 
     def subtract_storage_usage(self, bytes_freed: int) -> None:
         """
-        Subtract from storage usage (call after file deletion).
+        Atomically subtract from storage usage (call after file deletion).
+
+        Uses F() expression with Greatest() to ensure the value never goes
+        negative, even under concurrent deletion operations. This is important
+        because storage usage should never be negative.
 
         Args:
             bytes_freed: Number of bytes to subtract
         """
-        self.total_storage_bytes = max(0, self.total_storage_bytes - bytes_freed)
-        self.save(update_fields=["total_storage_bytes", "updated_at"])
+        from django.db.models.functions import Greatest
+
+        # Use Greatest() to ensure we never go below 0
+        # This generates: UPDATE ... SET total_storage_bytes = GREATEST(total_storage_bytes - X, 0)
+        Profile.objects.filter(pk=self.pk).update(
+            total_storage_bytes=Greatest(
+                models.F("total_storage_bytes") - bytes_freed,
+                0,
+            ),
+        )
+        # Refresh instance to get the updated value from database
+        self.refresh_from_db(fields=["total_storage_bytes"])
 
     def clean(self):
         """Validate and normalize username."""

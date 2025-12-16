@@ -148,15 +148,34 @@ class SoftDeleteMixin(models.Model):
         Sets is_deleted=True and deleted_at to current time.
         Does not actually remove the record from database.
 
+        This method is idempotent - calling it on an already deleted
+        record is a no-op (does not update deleted_at or call hooks).
+
         Example:
             article.soft_delete()
             assert article.is_deleted == True
         """
-        # TODO: Implement
-        # from django.utils import timezone
-        # self.is_deleted = True
-        # self.deleted_at = timezone.now()
-        # self.save(update_fields=["is_deleted", "deleted_at", "updated_at"])
+        if self.is_deleted:
+            return  # Already deleted, no-op for idempotency
+
+        from django.utils import timezone
+
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.on_soft_delete()  # Hook for subclass customization
+        self.save(update_fields=["is_deleted", "deleted_at", "updated_at"])
+
+    def on_soft_delete(self) -> None:
+        """
+        Hook for subclass customization during soft delete.
+
+        Called before save() in soft_delete(). Override in subclasses
+        to add custom logic like quota tracking, cleanup, etc.
+
+        Example:
+            def on_soft_delete(self):
+                self.uploader.profile.subtract_storage_usage(self.file_size)
+        """
         pass
 
     def restore(self) -> None:
@@ -165,14 +184,32 @@ class SoftDeleteMixin(models.Model):
 
         Sets is_deleted=False and deleted_at to None.
 
+        This method is idempotent - calling it on a non-deleted
+        record is a no-op (does not call hooks or save).
+
         Example:
             article.restore()
             assert article.is_deleted == False
         """
-        # TODO: Implement
-        # self.is_deleted = False
-        # self.deleted_at = None
-        # self.save(update_fields=["is_deleted", "deleted_at", "updated_at"])
+        if not self.is_deleted:
+            return  # Not deleted, no-op for idempotency
+
+        self.is_deleted = False
+        self.deleted_at = None
+        self.on_restore()  # Hook for subclass customization
+        self.save(update_fields=["is_deleted", "deleted_at", "updated_at"])
+
+    def on_restore(self) -> None:
+        """
+        Hook for subclass customization during restore.
+
+        Called before save() in restore(). Override in subclasses
+        to add custom logic like quota re-addition, etc.
+
+        Example:
+            def on_restore(self):
+                self.uploader.profile.add_storage_usage(self.file_size)
+        """
         pass
 
     def hard_delete(self) -> None:
@@ -188,9 +225,7 @@ class SoftDeleteMixin(models.Model):
         Warning:
             This cannot be undone. Consider soft_delete() instead.
         """
-        # TODO: Implement
-        # super().delete()
-        pass
+        super().delete()
 
 
 class SlugMixin(models.Model):

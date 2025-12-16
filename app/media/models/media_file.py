@@ -495,3 +495,27 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
             True if version == 1, False otherwise.
         """
         return self.version == 1
+
+    # =========================================================================
+    # Soft Delete Hooks (Quota Tracking)
+    # =========================================================================
+
+    def on_soft_delete(self) -> None:
+        """
+        Hook called during soft_delete to decrement user's storage quota.
+
+        Uses the atomic subtract_storage_usage method from Profile to ensure
+        thread-safe quota updates even under concurrent deletions.
+        """
+        if hasattr(self.uploader, "profile"):
+            self.uploader.profile.subtract_storage_usage(self.file_size)
+
+    def on_restore(self) -> None:
+        """
+        Hook called during restore to increment user's storage quota.
+
+        Uses the atomic add_storage_usage method from Profile to ensure
+        thread-safe quota updates even under concurrent restores.
+        """
+        if hasattr(self.uploader, "profile"):
+            self.uploader.profile.add_storage_usage(self.file_size)

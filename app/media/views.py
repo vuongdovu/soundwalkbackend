@@ -32,6 +32,7 @@ from media.serializers import (
     MediaFileShareSerializer,
     MediaFileUploadSerializer,
     PartCompletionResultSerializer,
+    QuotaStatusSerializer,
 )
 from media.services.access_control import AccessControlService, FileAccessLevel
 from media.services.chunked_upload import get_chunked_upload_service
@@ -942,4 +943,62 @@ class ChunkedUploadProgressView(APIView):
         service = get_chunked_upload_service()
         progress = service.get_session_progress(session)
         serializer = ChunkedUploadProgressSerializer(progress)
+        return Response(serializer.data)
+
+
+# =============================================================================
+# Quota Status View
+# =============================================================================
+
+
+class QuotaStatusView(APIView):
+    """
+    Get storage quota status for the current user.
+
+    GET /api/v1/media/quota/
+        Returns current storage usage and quota information.
+
+    Authentication:
+        Requires valid JWT token.
+
+    Response:
+        - total_storage_bytes: Bytes currently used
+        - storage_quota_bytes: Maximum allowed bytes
+        - storage_remaining_bytes: Bytes available (0 if over quota)
+        - storage_used_percent: Percentage of quota used
+        - storage_used_mb: Storage used in megabytes
+        - storage_quota_mb: Quota in megabytes
+        - can_upload: Boolean indicating if uploads are allowed
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="get_quota_status",
+        summary="Get storage quota status",
+        description="Returns the current user's storage quota status including "
+        "used space, remaining space, and upload availability.",
+        responses={
+            200: OpenApiResponse(
+                response=QuotaStatusSerializer,
+                description="Quota status information",
+            ),
+        },
+        tags=["Media"],
+    )
+    def get(self, request):
+        """Get storage quota status for the current user."""
+        profile = request.user.profile
+
+        data = {
+            "total_storage_bytes": profile.total_storage_bytes,
+            "storage_quota_bytes": profile.storage_quota_bytes,
+            "storage_remaining_bytes": profile.storage_remaining_bytes,
+            "storage_used_percent": round(profile.storage_used_percent, 2),
+            "storage_used_mb": profile.storage_used_mb,
+            "storage_quota_mb": profile.storage_quota_mb,
+            "can_upload": profile.storage_remaining_bytes > 0,
+        }
+
+        serializer = QuotaStatusSerializer(data)
         return Response(serializer.data)
