@@ -58,6 +58,36 @@ def user_near_quota(db) -> "User":
 
 
 @pytest.fixture
+def other_user(db) -> "User":
+    """Create another verified user for sharing tests."""
+    user = UserFactory(email_verified=True)
+    user.profile.storage_quota_bytes = 1024 * 1024 * 1024  # 1GB
+    user.profile.total_storage_bytes = 0
+    user.profile.save()
+    return user
+
+
+@pytest.fixture
+def third_user(db) -> "User":
+    """Create a third verified user for multi-user tests."""
+    user = UserFactory(email_verified=True)
+    user.profile.storage_quota_bytes = 1024 * 1024 * 1024  # 1GB
+    user.profile.total_storage_bytes = 0
+    user.profile.save()
+    return user
+
+
+@pytest.fixture
+def staff_user(db) -> "User":
+    """Create a staff user for internal visibility tests."""
+    user = UserFactory(email_verified=True, is_staff=True)
+    user.profile.storage_quota_bytes = 1024 * 1024 * 1024  # 1GB
+    user.profile.total_storage_bytes = 0
+    user.profile.save()
+    return user
+
+
+@pytest.fixture
 def authenticated_client(user: "User") -> APIClient:
     """Return API client authenticated with JWT token."""
     client = APIClient()
@@ -71,6 +101,24 @@ def authenticated_client_near_quota(user_near_quota: "User") -> APIClient:
     """Return authenticated client for user near quota."""
     client = APIClient()
     refresh = RefreshToken.for_user(user_near_quota)
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+    return client
+
+
+@pytest.fixture
+def other_authenticated_client(other_user: "User") -> APIClient:
+    """Return API client authenticated as other_user."""
+    client = APIClient()
+    refresh = RefreshToken.for_user(other_user)
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+    return client
+
+
+@pytest.fixture
+def staff_authenticated_client(staff_user: "User") -> APIClient:
+    """Return API client authenticated as staff user."""
+    client = APIClient()
+    refresh = RefreshToken.for_user(staff_user)
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
     return client
 
