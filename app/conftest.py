@@ -29,6 +29,76 @@ def pytest_configure():
     ]
 
 
+def pytest_collection_modifyitems(items):
+    """
+    Auto-mark tests based on filename patterns.
+
+    Mapping:
+    - test_integration.py → e2e (full user journey workflows)
+    - test_views.py, test_services.py, test_tasks.py, etc. → integration
+    - test_models.py, test_serializers.py, test_validators.py, etc. → unit
+    - Unmatched files → integration (safe default for Django)
+
+    Explicit markers on test functions/classes take precedence.
+    """
+    # Filename patterns for each category
+    e2e_patterns = ["test_integration.py"]
+
+    integration_patterns = [
+        "test_views.py",
+        "test_services.py",
+        "test_tasks.py",
+        "test_permissions.py",
+        "test_webhooks.py",
+        "test_handlers.py",
+        "test_quarantine.py",
+        "test_scanner.py",
+        "test_scan_tasks.py",
+        "test_orchestrator.py",
+        "test_payout_service.py",
+        "test_reconciliation_service.py",
+        "test_refund_service.py",
+        "test_payout_executor.py",
+        "test_hold_manager.py",
+        "test_optimistic_locking.py",
+        "test_circuit_breaker.py",
+        "test_processors.py",
+    ]
+
+    unit_patterns = [
+        "test_models.py",
+        "test_serializers.py",
+        "test_validators.py",
+        "test_managers.py",
+        "test_signals.py",
+        "test_adapters.py",
+        "test_factories.py",
+        "test_state_transitions.py",
+        "test_locks.py",
+        "test_media_asset.py",
+    ]
+
+    for item in items:
+        # Skip if test already has unit/integration/e2e marker
+        existing_markers = {m.name for m in item.iter_markers()}
+        if existing_markers & {"unit", "integration", "e2e"}:
+            continue
+
+        filepath = str(item.fspath)
+        filename = filepath.split("/")[-1]
+
+        # Check patterns in priority order
+        if any(pattern in filename for pattern in e2e_patterns):
+            item.add_marker(pytest.mark.e2e)
+        elif any(pattern in filename for pattern in integration_patterns):
+            item.add_marker(pytest.mark.integration)
+        elif any(pattern in filename for pattern in unit_patterns):
+            item.add_marker(pytest.mark.unit)
+        else:
+            # Default: integration (safe for Django where most tests hit DB)
+            item.add_marker(pytest.mark.integration)
+
+
 @pytest.fixture(scope="session")
 def django_db_setup():
     """Configure the test database for the session."""

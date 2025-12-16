@@ -383,13 +383,11 @@ class TestPayoutServiceDistributedLocking:
 
     def test_execute_payout_lock_failure(self, service_pending_payout, mocker):
         """Should raise LockAcquisitionError when lock cannot be acquired."""
-        # Mock Redis to simulate lock failure
-        mock_redis = mocker.MagicMock()
-        mock_redis.set.return_value = False  # Lock not acquired
-
-        mocker.patch(
-            "payments.locks.get_redis_connection",
-            return_value=mock_redis,
+        # Mock DistributedLock at the service level to simulate lock failure
+        # This avoids re-testing the lock's timeout loop (tested in test_locks.py)
+        mock_lock = mocker.patch("payments.services.payout_service.DistributedLock")
+        mock_lock.return_value.__enter__.side_effect = LockAcquisitionError(
+            "Lock already held", details={"key": "test"}
         )
 
         with pytest.raises(LockAcquisitionError):
