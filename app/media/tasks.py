@@ -245,17 +245,27 @@ def scan_file_for_malware(self, media_file_id: str) -> dict:
 )
 def process_media_file(self, scan_result: dict | str) -> dict:
     """
-    Process an uploaded media file asynchronously.
+    Process an uploaded media file asynchronously with graceful degradation.
 
     This task handles the complete processing pipeline:
     1. Loads the MediaFile by ID (from chain result or direct call)
     2. Checks idempotency (already processed? skip)
     3. Transitions state to PROCESSING
-    4. Dispatches to appropriate processor based on media type
-    5. Transitions state to READY or FAILED
+    4. Extracts metadata (best effort)
+    5. Generates derivative assets (each independently, partial failures OK)
+    6. Always transitions to READY (graceful degradation)
 
-    For images, this generates a thumbnail. Video and document
-    processing will be added in future phases.
+    Processing is type-specific:
+    - Images: thumbnail, preview, web-optimized + metadata
+    - Videos: poster frame + metadata
+    - Documents: thumbnail, extracted text + metadata
+    - Audio: No processing yet (marked ready)
+
+    Graceful Degradation:
+    - Each asset is generated independently
+    - Partial failures are recorded but don't block READY status
+    - Original file is always accessible
+    - Metadata extraction failures are logged but ignored
 
     Args:
         scan_result: Either a dict from scan_file_for_malware chain
@@ -269,7 +279,19 @@ def process_media_file(self, scan_result: dict | str) -> dict:
         Exception: For transient failures that will trigger retry.
     """
     from media.models import MediaFile
-    from media.processors.image import ImageProcessingError, generate_image_thumbnail
+    from media.processors import (
+        PermanentProcessingError,
+        TransientProcessingError,
+        extract_document_metadata,
+        extract_document_text,
+        extract_image_metadata,
+        extract_video_metadata,
+        extract_video_poster,
+        generate_document_thumbnail,
+        generate_image_preview,
+        generate_image_thumbnail,
+        generate_image_web_optimized,
+    )
 
     # Handle both chain input (dict) and direct call (str)
     if isinstance(scan_result, dict):
@@ -345,24 +367,125 @@ def process_media_file(self, scan_result: dict | str) -> dict:
         },
     )
 
+    # Track errors for graceful degradation
+    errors: list[str] = []
+    metadata_updates: dict = {}
+
     try:
         # Dispatch to appropriate processor based on media type
         if media_file.media_type == MediaFile.MediaType.IMAGE:
-            generate_image_thumbnail(media_file)
+            # Extract metadata (best effort)
+            try:
+                meta = extract_image_metadata(media_file)
+                metadata_updates.update(meta)
+            except Exception as e:
+                errors.append(f"metadata: {e}")
+                logger.warning(
+                    "Failed to extract image metadata",
+                    extra={"media_file_id": str(media_file_id), "error": str(e)},
+                )
+
+            # Generate assets independently (graceful degradation)
+            for generator, asset_name in [
+                (generate_image_thumbnail, "thumbnail"),
+                (generate_image_preview, "preview"),
+                (generate_image_web_optimized, "web_optimized"),
+            ]:
+                try:
+                    generator(media_file)
+                except PermanentProcessingError as e:
+                    errors.append(f"{asset_name}: {e}")
+                    logger.warning(
+                        f"Failed to generate {asset_name} (permanent)",
+                        extra={"media_file_id": str(media_file_id), "error": str(e)},
+                    )
+                except TransientProcessingError as e:
+                    errors.append(f"{asset_name}: {e}")
+                    logger.warning(
+                        f"Failed to generate {asset_name} (transient)",
+                        extra={"media_file_id": str(media_file_id), "error": str(e)},
+                    )
+                except Exception as e:
+                    errors.append(f"{asset_name}: {e}")
+                    logger.warning(
+                        f"Unexpected error generating {asset_name}",
+                        extra={"media_file_id": str(media_file_id), "error": str(e)},
+                    )
+
         elif media_file.media_type == MediaFile.MediaType.VIDEO:
-            # TODO: Implement video processing in Phase 3
-            logger.info(
-                "Video processing not yet implemented, marking as ready",
-                extra={"media_file_id": str(media_file_id)},
-            )
+            # Extract metadata (best effort)
+            try:
+                meta = extract_video_metadata(media_file)
+                metadata_updates.update(meta)
+            except Exception as e:
+                errors.append(f"metadata: {e}")
+                logger.warning(
+                    "Failed to extract video metadata",
+                    extra={"media_file_id": str(media_file_id), "error": str(e)},
+                )
+
+            # Extract poster frame
+            try:
+                extract_video_poster(media_file)
+            except PermanentProcessingError as e:
+                errors.append(f"poster: {e}")
+                logger.warning(
+                    "Failed to extract video poster (permanent)",
+                    extra={"media_file_id": str(media_file_id), "error": str(e)},
+                )
+            except TransientProcessingError as e:
+                errors.append(f"poster: {e}")
+                logger.warning(
+                    "Failed to extract video poster (transient)",
+                    extra={"media_file_id": str(media_file_id), "error": str(e)},
+                )
+            except Exception as e:
+                errors.append(f"poster: {e}")
+                logger.warning(
+                    "Unexpected error extracting video poster",
+                    extra={"media_file_id": str(media_file_id), "error": str(e)},
+                )
+
         elif media_file.media_type == MediaFile.MediaType.DOCUMENT:
-            # TODO: Implement document processing in Phase 3
-            logger.info(
-                "Document processing not yet implemented, marking as ready",
-                extra={"media_file_id": str(media_file_id)},
-            )
+            # Extract metadata (best effort)
+            try:
+                meta = extract_document_metadata(media_file)
+                metadata_updates.update(meta)
+            except Exception as e:
+                errors.append(f"metadata: {e}")
+                logger.warning(
+                    "Failed to extract document metadata",
+                    extra={"media_file_id": str(media_file_id), "error": str(e)},
+                )
+
+            # Generate assets independently (graceful degradation)
+            for generator, asset_name in [
+                (generate_document_thumbnail, "thumbnail"),
+                (extract_document_text, "text"),
+            ]:
+                try:
+                    generator(media_file)
+                except PermanentProcessingError as e:
+                    errors.append(f"{asset_name}: {e}")
+                    logger.warning(
+                        f"Failed to generate {asset_name} (permanent)",
+                        extra={"media_file_id": str(media_file_id), "error": str(e)},
+                    )
+                except TransientProcessingError as e:
+                    errors.append(f"{asset_name}: {e}")
+                    logger.warning(
+                        f"Failed to generate {asset_name} (transient)",
+                        extra={"media_file_id": str(media_file_id), "error": str(e)},
+                    )
+                except Exception as e:
+                    errors.append(f"{asset_name}: {e}")
+                    logger.warning(
+                        f"Unexpected error generating {asset_name}",
+                        extra={"media_file_id": str(media_file_id), "error": str(e)},
+                    )
+
         elif media_file.media_type == MediaFile.MediaType.AUDIO:
-            # TODO: Implement audio processing in Phase 3
+            # Audio processing not yet implemented
             logger.info(
                 "Audio processing not yet implemented, marking as ready",
                 extra={"media_file_id": str(media_file_id)},
@@ -376,24 +499,41 @@ def process_media_file(self, scan_result: dict | str) -> dict:
                 },
             )
 
-        # Mark as successfully processed
+        # Update metadata and mark as READY (graceful degradation)
+        # Original file is always accessible regardless of asset generation
         with transaction.atomic():
+            # Update metadata if we extracted any
+            if metadata_updates:
+                current_metadata = media_file.metadata or {}
+                media_file.metadata = {**current_metadata, **metadata_updates}
+
             media_file.processing_status = MediaFile.ProcessingStatus.READY
             media_file.processing_completed_at = timezone.now()
-            media_file.processing_error = None
+
+            # Store errors if any occurred (partial failure info)
+            if errors:
+                media_file.processing_error = "; ".join(errors)[:1000]  # Truncate
+            else:
+                media_file.processing_error = None
+
             media_file.save(
                 update_fields=[
+                    "metadata",
                     "processing_status",
                     "processing_completed_at",
                     "processing_error",
                 ]
             )
 
-        logger.info(
-            "Media file processed successfully",
+        log_level = logging.WARNING if errors else logging.INFO
+        logger.log(
+            log_level,
+            "Media file processed" + (" with errors" if errors else " successfully"),
             extra={
                 "media_file_id": str(media_file_id),
                 "media_type": media_file.media_type,
+                "error_count": len(errors),
+                "errors": errors[:5] if errors else None,  # First 5 errors
             },
         )
 
@@ -401,25 +541,11 @@ def process_media_file(self, scan_result: dict | str) -> dict:
             "status": "processed",
             "media_file_id": str(media_file_id),
             "media_type": media_file.media_type,
+            "errors": errors if errors else None,
         }
 
-    except ImageProcessingError as e:
-        # Permanent failure - don't retry
-        error_msg = str(e)
-        _mark_processing_failed(media_file, error_msg)
-
-        logger.warning(
-            "Media file processing failed permanently",
-            extra={
-                "media_file_id": str(media_file_id),
-                "error": error_msg,
-            },
-        )
-
-        # Reject prevents retrying this task
-        raise Reject(error_msg, requeue=False)
-
     except Exception as e:
+        # Unexpected error during processing setup (not asset generation)
         # Check if we've exhausted retries
         error_msg = f"{type(e).__name__}: {str(e)}"
 

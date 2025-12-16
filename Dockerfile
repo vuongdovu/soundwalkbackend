@@ -68,6 +68,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # - libjpeg62-turbo, zlib1g: Image processing runtime libraries for Pillow
 # - libwebp7, libwebpmux3, libwebpdemux2: WebP image format runtime libraries
 # - libmagic1: Magic number detection for python-magic (MIME type detection)
+# - ffmpeg: Video processing (poster frame extraction, metadata)
+# - poppler-utils: PDF processing (thumbnail generation via pdf2image)
+# - libreoffice-writer-nogui: Office document conversion (Word to PDF)
+# - libreoffice-calc-nogui: Office document conversion (Excel to PDF)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
@@ -77,6 +81,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebpmux3 \
     libwebpdemux2 \
     libmagic1 \
+    ffmpeg \
+    poppler-utils \
+    libreoffice-writer-nogui \
+    libreoffice-calc-nogui \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

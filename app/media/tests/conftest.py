@@ -383,3 +383,344 @@ def media_file_pending_scan(user: "User", sample_jpeg_uploaded: SimpleUploadedFi
         file_path.unlink()
     if test_dir.exists():
         shutil.rmtree(test_dir, ignore_errors=True)
+
+
+# =============================================================================
+# Video File Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def sample_mp4() -> io.BytesIO:
+    """
+    Generate a minimal valid MP4 video file.
+
+    This creates a tiny valid MP4 container using raw bytes.
+    It's enough for format detection but not playable.
+    For actual video processing tests, use mock_ffmpeg fixture.
+    """
+    # Minimal ftyp + moov structure for a valid MP4
+    # This is the bare minimum to be recognized as MP4
+    ftyp = (
+        b"\x00\x00\x00\x14"  # box size (20 bytes)
+        b"ftyp"  # box type
+        b"isom"  # major brand
+        b"\x00\x00\x02\x00"  # minor version
+        b"isom"  # compatible brand
+    )
+
+    # Minimal moov box (empty but valid structure)
+    moov = (
+        b"\x00\x00\x00\x08"  # box size (8 bytes)
+        b"moov"  # box type
+    )
+
+    buffer = io.BytesIO(ftyp + moov)
+    buffer.name = "test_video.mp4"
+    return buffer
+
+
+@pytest.fixture
+def sample_mp4_uploaded(sample_mp4: io.BytesIO) -> SimpleUploadedFile:
+    """Return MP4 as SimpleUploadedFile."""
+    return SimpleUploadedFile(
+        name="test_video.mp4",
+        content=sample_mp4.read(),
+        content_type="video/mp4",
+    )
+
+
+# =============================================================================
+# Document File Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def sample_pdf_with_text() -> io.BytesIO:
+    """
+    Generate a PDF with extractable text content.
+
+    This creates a minimal PDF that has text that can be extracted
+    by pdfplumber for text extraction tests.
+    """
+    # A simple PDF with actual text content
+    pdf_content = b"""%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]
+/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj
+4 0 obj << /Length 44 >>
+stream
+BT /F1 12 Tf 100 700 Td (Hello World) Tj ET
+endstream
+endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+xref
+0 6
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000266 00000 n
+0000000359 00000 n
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+434
+%%EOF"""
+    buffer = io.BytesIO(pdf_content)
+    buffer.name = "test_document_with_text.pdf"
+    return buffer
+
+
+@pytest.fixture
+def sample_pdf_with_text_uploaded(
+    sample_pdf_with_text: io.BytesIO,
+) -> SimpleUploadedFile:
+    """Return PDF with text as SimpleUploadedFile."""
+    return SimpleUploadedFile(
+        name="test_document_with_text.pdf",
+        content=sample_pdf_with_text.read(),
+        content_type="application/pdf",
+    )
+
+
+@pytest.fixture
+def sample_docx() -> io.BytesIO:
+    """
+    Generate a minimal Word document (DOCX).
+
+    Uses python-docx if available, otherwise creates a minimal valid DOCX.
+    """
+    try:
+        from docx import Document
+
+        doc = Document()
+        doc.add_paragraph("Test document content")
+        doc.add_paragraph("With multiple paragraphs for testing.")
+
+        buffer = io.BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+        buffer.name = "test_document.docx"
+        return buffer
+    except ImportError:
+        # Fallback: Create minimal DOCX structure (ZIP with XML)
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Minimal [Content_Types].xml
+            content_types = b"""<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"""
+            zf.writestr("[Content_Types].xml", content_types)
+
+            # Minimal _rels/.rels
+            rels = b"""<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"""
+            zf.writestr("_rels/.rels", rels)
+
+            # Minimal word/document.xml
+            document = b"""<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body><w:p><w:r><w:t>Test content</w:t></w:r></w:p></w:body>
+</w:document>"""
+            zf.writestr("word/document.xml", document)
+
+        buffer.seek(0)
+        buffer.name = "test_document.docx"
+        return buffer
+
+
+@pytest.fixture
+def sample_docx_uploaded(sample_docx: io.BytesIO) -> SimpleUploadedFile:
+    """Return DOCX as SimpleUploadedFile."""
+    return SimpleUploadedFile(
+        name="test_document.docx",
+        content=sample_docx.read(),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+
+
+@pytest.fixture
+def sample_xlsx() -> io.BytesIO:
+    """
+    Generate a minimal Excel spreadsheet (XLSX).
+
+    Uses openpyxl if available, otherwise creates a minimal valid XLSX.
+    """
+    try:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Test Sheet"
+        ws["A1"] = "Test"
+        ws["B1"] = "Data"
+        ws["A2"] = 123
+        ws["B2"] = 456
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        buffer.name = "test_spreadsheet.xlsx"
+        return buffer
+    except ImportError:
+        # Fallback: Create minimal XLSX structure (ZIP with XML)
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Minimal [Content_Types].xml
+            content_types = b"""<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+</Types>"""
+            zf.writestr("[Content_Types].xml", content_types)
+
+            # Minimal _rels/.rels
+            rels = b"""<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"""
+            zf.writestr("_rels/.rels", rels)
+
+            # Minimal xl/workbook.xml
+            workbook = b"""<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets>
+</workbook>"""
+            zf.writestr("xl/workbook.xml", workbook)
+
+        buffer.seek(0)
+        buffer.name = "test_spreadsheet.xlsx"
+        return buffer
+
+
+@pytest.fixture
+def sample_xlsx_uploaded(sample_xlsx: io.BytesIO) -> SimpleUploadedFile:
+    """Return XLSX as SimpleUploadedFile."""
+    return SimpleUploadedFile(
+        name="test_spreadsheet.xlsx",
+        content=sample_xlsx.read(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+# =============================================================================
+# Processing Test Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def media_file_for_processing(
+    user: "User", sample_jpeg_uploaded: SimpleUploadedFile, db
+):
+    """
+    Create a MediaFile ready for processing (scan complete).
+
+    The file is in CLEAN scan_status and PENDING processing_status.
+    """
+    from pathlib import Path
+    from django.conf import settings
+    from media.models import MediaFile
+
+    # Create directory for test file
+    media_root = Path(settings.MEDIA_ROOT)
+    test_dir = media_root / "test_processing"
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write file to disk
+    file_path = test_dir / "test_process_file.jpg"
+    file_path.write_bytes(sample_jpeg_uploaded.read())
+    sample_jpeg_uploaded.seek(0)
+
+    # Create MediaFile
+    media_file = MediaFile.objects.create(
+        file="test_processing/test_process_file.jpg",
+        original_filename="test_image.jpg",
+        media_type=MediaFile.MediaType.IMAGE,
+        mime_type="image/jpeg",
+        file_size=sample_jpeg_uploaded.size,
+        uploader=user,
+        visibility=MediaFile.Visibility.PRIVATE,
+        scan_status=MediaFile.ScanStatus.CLEAN,
+        processing_status=MediaFile.ProcessingStatus.PENDING,
+    )
+
+    yield media_file
+
+    # Cleanup
+    import shutil
+
+    if file_path.exists():
+        file_path.unlink()
+    if test_dir.exists():
+        shutil.rmtree(test_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def mock_ffmpeg():
+    """
+    Mock FFmpeg/FFprobe for video processing tests.
+
+    Simulates FFmpeg behavior without requiring actual video files
+    or the FFmpeg binary.
+    """
+    from unittest.mock import MagicMock, patch
+
+    # Mock ffprobe output for a typical video
+    ffprobe_output = {
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1920,
+                "height": 1080,
+                "r_frame_rate": "30000/1001",
+                "duration": "60.0",
+            },
+            {
+                "codec_type": "audio",
+                "codec_name": "aac",
+            },
+        ],
+        "format": {
+            "duration": "60.0",
+            "bit_rate": "5000000",
+        },
+    }
+
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = __import__("json").dumps(ffprobe_output)
+    mock_run.return_value.stderr = ""
+
+    with patch("subprocess.run", mock_run):
+        yield mock_run
+
+
+@pytest.fixture
+def mock_libreoffice():
+    """
+    Mock LibreOffice for document conversion tests.
+
+    Simulates LibreOffice headless conversion without requiring
+    the actual LibreOffice installation.
+    """
+    from unittest.mock import MagicMock, patch
+
+    mock_run = MagicMock()
+    mock_run.return_value.returncode = 0
+    mock_run.return_value.stdout = ""
+    mock_run.return_value.stderr = ""
+
+    with patch("subprocess.run", mock_run):
+        yield mock_run
