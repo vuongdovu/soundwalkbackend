@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /home/wilson/Projects/sk-b log --oneline -20)"
+    ]
+  }
+}

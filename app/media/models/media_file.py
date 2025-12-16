@@ -277,6 +277,22 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
             models.Index(fields=["uploader", "created_at"]),
             models.Index(fields=["visibility", "is_current"]),
             models.Index(fields=["version_group", "version"]),
+            # Partial indexes for queue optimization
+            models.Index(
+                fields=["processing_status", "processing_priority", "created_at"],
+                name="idx_processing_queue",
+                condition=models.Q(processing_status="pending"),
+            ),
+            models.Index(
+                fields=["scan_status", "created_at"],
+                name="idx_scan_queue",
+                condition=models.Q(scan_status="pending"),
+            ),
+            models.Index(
+                fields=["uploader", "is_deleted", "-created_at"],
+                name="idx_active_files",
+                condition=models.Q(is_deleted=False),
+            ),
         ]
 
         constraints = [
@@ -519,3 +535,81 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
         """
         if hasattr(self.uploader, "profile"):
             self.uploader.profile.add_storage_usage(self.file_size)
+
+    # =========================================================================
+    # Tag Methods
+    # =========================================================================
+
+    @property
+    def tags(self) -> "QuerySet":
+        """
+        Get all tags applied to this file.
+
+        Returns:
+            QuerySet of Tag objects.
+
+        Usage:
+            for tag in media_file.tags:
+                print(tag.name)
+        """
+        from media.models import Tag
+
+        return Tag.objects.filter(tagged_files__media_file=self)
+
+    def add_tag(
+        self,
+        tag: Any,
+        applied_by: Any = None,
+        confidence: float | None = None,
+    ) -> tuple[Any, bool]:
+        """
+        Apply a tag to this file (idempotent).
+
+        Args:
+            tag: Tag instance to apply.
+            applied_by: User applying the tag.
+            confidence: Confidence score for auto-detected tags.
+
+        Returns:
+            Tuple of (MediaFileTag, created).
+
+        Usage:
+            media_file.add_tag(tag, applied_by=user)
+        """
+        from media.models import MediaFileTag
+
+        return MediaFileTag.apply_tag(
+            media_file=self,
+            tag=tag,
+            applied_by=applied_by,
+            confidence=confidence,
+        )
+
+    def remove_tag(self, tag: Any) -> int:
+        """
+        Remove a tag from this file.
+
+        Args:
+            tag: Tag instance to remove.
+
+        Returns:
+            Number of tags removed (0 or 1).
+
+        Usage:
+            media_file.remove_tag(tag)
+        """
+        from media.models import MediaFileTag
+
+        return MediaFileTag.remove_tag(media_file=self, tag=tag)
+
+    def has_tag(self, tag: Any) -> bool:
+        """
+        Check if this file has a specific tag.
+
+        Args:
+            tag: Tag instance to check for.
+
+        Returns:
+            True if the file has the tag, False otherwise.
+        """
+        return self.file_tags.filter(tag=tag).exists()

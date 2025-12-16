@@ -20,6 +20,16 @@ Chunked Upload Routes:
     POST /chunked/sessions/{id}/parts/{num}/complete/ - Record completion (S3)
     POST /chunked/sessions/{id}/finalize/ - Complete upload
     GET /chunked/sessions/{id}/progress/ - Get progress
+
+Tag Routes:
+    GET /tags/ - List user's tags and accessible global tags
+    POST /tags/ - Create a new user tag
+    GET /tags/{tag_id}/ - Get tag details
+    DELETE /tags/{tag_id}/ - Delete a user tag
+    GET /files/{file_id}/tags/ - List tags applied to file
+    POST /files/{file_id}/tags/ - Apply tag to file
+    DELETE /files/{file_id}/tags/{tag_id}/ - Remove tag from file
+    GET /files/by-tags/ - Query files by tags
 """
 
 from django.urls import path
@@ -32,14 +42,19 @@ from media.views import (
     ChunkedUploadProgressView,
     ChunkedUploadSessionDetailView,
     ChunkedUploadSessionView,
+    FilesByTagView,
     MediaFileDetailView,
     MediaFileDownloadView,
     MediaFileShareDeleteView,
     MediaFileShareView,
     MediaFilesSharedWithMeView,
+    MediaFileTagDeleteView,
+    MediaFileTagsView,
     MediaFileViewView,
     MediaUploadView,
     QuotaStatusView,
+    TagDetailView,
+    TagListCreateView,
 )
 
 app_name = "media"
@@ -103,4 +118,18 @@ urlpatterns = [
         ChunkedUploadProgressView.as_view(),
         name="chunked-progress",
     ),
+    # Tags
+    path("tags/", TagListCreateView.as_view(), name="tag-list"),
+    path("tags/<uuid:tag_id>/", TagDetailView.as_view(), name="tag-detail"),
+    path(
+        "files/<uuid:file_id>/tags/",
+        MediaFileTagsView.as_view(),
+        name="file-tags",
+    ),
+    path(
+        "files/<uuid:file_id>/tags/<uuid:tag_id>/",
+        MediaFileTagDeleteView.as_view(),
+        name="file-tag-delete",
+    ),
+    path("files/by-tags/", FilesByTagView.as_view(), name="files-by-tags"),
 ]

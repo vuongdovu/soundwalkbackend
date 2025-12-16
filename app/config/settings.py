@@ -421,6 +421,12 @@ CLAMAV_STALE_DEFINITIONS_DAYS = env.int("CLAMAV_STALE_DEFINITIONS_DAYS", default
 CLAMAV_QUARANTINE_DIR = env("CLAMAV_QUARANTINE_DIR", default="quarantine")
 
 # =============================================================================
+# Soft Delete Configuration
+# =============================================================================
+# Number of days to retain soft-deleted records before permanent deletion
+SOFT_DELETE_RETENTION_DAYS = env.int("SOFT_DELETE_RETENTION_DAYS", default=30)
+
+# =============================================================================
 # Chunked Upload Configuration
 # =============================================================================
 # Expiry time for upload sessions (in hours)

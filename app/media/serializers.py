@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from rest_framework import serializers
 
 from authentication.models import User
-from media.models import MediaFile, MediaFileShare, UploadSession
+from media.models import MediaFile, MediaFileShare, MediaFileTag, Tag, UploadSession
 from media.validators import MediaValidator
 
 if TYPE_CHECKING:
@@ -507,4 +507,159 @@ class QuotaStatusSerializer(serializers.Serializer):
     storage_quota_mb = serializers.FloatField(help_text="Storage quota in megabytes")
     can_upload = serializers.BooleanField(
         help_text="Whether the user can upload new files"
+    )
+
+
+# =============================================================================
+# Tag Serializers
+# =============================================================================
+
+
+class TagSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for Tag model.
+
+    Used for API responses when listing or viewing tags.
+    """
+
+    is_user_tag = serializers.BooleanField(read_only=True)
+    is_system_tag = serializers.BooleanField(read_only=True)
+    is_auto_tag = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        """Serializer metadata."""
+
+        model = Tag
+        fields = [
+            "id",
+            "name",
+            "slug",
+            "tag_type",
+            "category",
+            "color",
+            "is_user_tag",
+            "is_system_tag",
+            "is_auto_tag",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class TagCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating user tags.
+
+    Only user tags can be created through the API.
+    System and auto tags are managed internally.
+    """
+
+    class Meta:
+        """Serializer metadata."""
+
+        model = Tag
+        fields = ["name", "category", "color"]
+
+    def validate_name(self, value: str) -> str:
+        """Validate tag name length and format."""
+        if len(value) < 1:
+            raise serializers.ValidationError("Tag name cannot be empty.")
+        if len(value) > 100:
+            raise serializers.ValidationError("Tag name cannot exceed 100 characters.")
+        return value
+
+    def create(self, validated_data: dict[str, Any]) -> Tag:
+        """Create a user tag for the current user."""
+        request = self.context.get("request")
+        user = request.user
+
+        tag, _ = Tag.get_or_create_user_tag(
+            name=validated_data["name"],
+            owner=user,
+            category=validated_data.get("category", ""),
+            color=validated_data.get("color", ""),
+        )
+        return tag
+
+
+class MediaFileTagSerializer(serializers.ModelSerializer):
+    """
+    Serializer for MediaFileTag associations.
+
+    Used to represent a tag applied to a file with metadata.
+    """
+
+    tag = TagSerializer(read_only=True)
+    applied_by_email = serializers.EmailField(
+        source="applied_by.email",
+        read_only=True,
+        allow_null=True,
+    )
+
+    class Meta:
+        """Serializer metadata."""
+
+        model = MediaFileTag
+        fields = [
+            "id",
+            "tag",
+            "applied_by",
+            "applied_by_email",
+            "confidence",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ApplyTagSerializer(serializers.Serializer):
+    """
+    Serializer for applying a tag to a file.
+
+    Supports applying by tag ID or by tag name (creates if needed).
+    """
+
+    tag_id = serializers.UUIDField(
+        required=False,
+        help_text="ID of existing tag to apply",
+    )
+    tag_name = serializers.CharField(
+        required=False,
+        max_length=100,
+        help_text="Name of tag to apply (creates user tag if needed)",
+    )
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        """Ensure either tag_id or tag_name is provided."""
+        if not attrs.get("tag_id") and not attrs.get("tag_name"):
+            raise serializers.ValidationError(
+                "Either tag_id or tag_name must be provided."
+            )
+        if attrs.get("tag_id") and attrs.get("tag_name"):
+            raise serializers.ValidationError(
+                "Only one of tag_id or tag_name should be provided."
+            )
+        return attrs
+
+    def validate_tag_id(self, value: str) -> str:
+        """Validate that the tag exists."""
+        if value and not Tag.objects.filter(pk=value).exists():
+            raise serializers.ValidationError("Tag not found.")
+        return value
+
+
+class FilesByTagsSerializer(serializers.Serializer):
+    """
+    Serializer for querying files by tags.
+
+    Supports filtering by multiple tags with AND/OR logic.
+    """
+
+    tags = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        help_text="List of tag IDs to filter by",
+    )
+    mode = serializers.ChoiceField(
+        choices=["and", "or"],
+        default="and",
+        help_text="Match mode: 'and' requires all tags, 'or' requires any tag",
     )

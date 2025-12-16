@@ -85,6 +85,9 @@ class SoftDeleteQuerySet(models.QuerySet):
         Marks all matching records as deleted without removing from database.
         Sets is_deleted=True and deleted_at=now().
 
+        Calls the on_soft_delete() hook on each instance for quota tracking
+        and other cleanup operations.
+
         Returns:
             Tuple of (count, {model_name: count}) matching Django's delete()
 
@@ -96,11 +99,22 @@ class SoftDeleteQuerySet(models.QuerySet):
             ).delete()
             print(f"Soft deleted {count} articles")
         """
-        # TODO: Implement
-        # from django.utils import timezone
-        # count = self.update(is_deleted=True, deleted_at=timezone.now())
-        # return count, {self.model._meta.label: count}
-        return 0, {}
+        from django.utils import timezone
+
+        # Get instances to call hooks on (before marking as deleted)
+        # Only process instances that aren't already deleted
+        instances = list(self.filter(is_deleted=False))
+
+        # Call on_soft_delete hook for each instance
+        for instance in instances:
+            if hasattr(instance, "on_soft_delete"):
+                instance.on_soft_delete()
+
+        # Perform the soft delete via update
+        now = timezone.now()
+        count = self.filter(is_deleted=False).update(is_deleted=True, deleted_at=now)
+
+        return count, {self.model._meta.label: count}
 
     def hard_delete(self) -> tuple[int, dict[str, int]]:
         """
@@ -121,15 +135,16 @@ class SoftDeleteQuerySet(models.QuerySet):
         Warning:
             This cannot be undone. Consider soft_delete() first.
         """
-        # TODO: Implement
-        # return super().delete()
-        return 0, {}
+        return super().delete()
 
     def restore(self) -> int:
         """
         Restore all soft-deleted objects in queryset.
 
         Sets is_deleted=False and deleted_at=None.
+
+        Calls the on_restore() hook on each instance for quota tracking
+        and other operations.
 
         Returns:
             Number of restored records
@@ -141,9 +156,19 @@ class SoftDeleteQuerySet(models.QuerySet):
             ).restore()
             print(f"Restored {count} articles")
         """
-        # TODO: Implement
-        # return self.update(is_deleted=False, deleted_at=None)
-        return 0
+        # Get instances to call hooks on (before restoring)
+        # Only process instances that are currently deleted
+        instances = list(self.filter(is_deleted=True))
+
+        # Call on_restore hook for each instance
+        for instance in instances:
+            if hasattr(instance, "on_restore"):
+                instance.on_restore()
+
+        # Perform the restore via update
+        count = self.filter(is_deleted=True).update(is_deleted=False, deleted_at=None)
+
+        return count
 
     def deleted(self) -> SoftDeleteQuerySet:
         """
@@ -156,9 +181,7 @@ class SoftDeleteQuerySet(models.QuerySet):
             # List deleted articles for admin review
             deleted_articles = Article.objects.deleted()
         """
-        # TODO: Implement
-        # return self.filter(is_deleted=True)
-        return self.none()  # type: ignore
+        return self.filter(is_deleted=True)
 
     def active(self) -> SoftDeleteQuerySet:
         """
@@ -174,9 +197,7 @@ class SoftDeleteQuerySet(models.QuerySet):
             # Ensure we only see active records
             articles = Article.all_objects.filter(author=user).active()
         """
-        # TODO: Implement
-        # return self.filter(is_deleted=False)
-        return self.none()  # type: ignore
+        return self.filter(is_deleted=False)
 
 
 class SoftDeleteManager(models.Manager):
@@ -211,9 +232,7 @@ class SoftDeleteManager(models.Manager):
         Returns:
             SoftDeleteQuerySet filtered to is_deleted=False
         """
-        # TODO: Implement
-        # return SoftDeleteQuerySet(self.model, using=self._db).filter(is_deleted=False)
-        return SoftDeleteQuerySet(self.model, using=self._db)
+        return SoftDeleteQuerySet(self.model, using=self._db).filter(is_deleted=False)
 
     def deleted(self) -> SoftDeleteQuerySet:
         """
@@ -225,9 +244,7 @@ class SoftDeleteManager(models.Manager):
         Example:
             Article.objects.deleted()  # Only deleted articles
         """
-        # TODO: Implement
-        # return SoftDeleteQuerySet(self.model, using=self._db).filter(is_deleted=True)
-        return SoftDeleteQuerySet(self.model, using=self._db).none()
+        return SoftDeleteQuerySet(self.model, using=self._db).filter(is_deleted=True)
 
     def with_deleted(self) -> SoftDeleteQuerySet:
         """
@@ -241,8 +258,6 @@ class SoftDeleteManager(models.Manager):
         Example:
             Article.objects.with_deleted().filter(author=user)
         """
-        # TODO: Implement
-        # return SoftDeleteQuerySet(self.model, using=self._db)
         return SoftDeleteQuerySet(self.model, using=self._db)
 
 

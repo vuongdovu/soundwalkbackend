@@ -19,9 +19,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from media.models import MediaFile
-from media.models import UploadSession
+from media.models import MediaFile, MediaFileTag, Tag, UploadSession
 from media.serializers import (
+    ApplyTagSerializer,
     ChunkedUploadFinalizeResultSerializer,
     ChunkedUploadInitSerializer,
     ChunkedUploadProgressSerializer,
@@ -30,9 +30,12 @@ from media.serializers import (
     MediaFileSerializer,
     MediaFileShareCreateSerializer,
     MediaFileShareSerializer,
+    MediaFileTagSerializer,
     MediaFileUploadSerializer,
     PartCompletionResultSerializer,
     QuotaStatusSerializer,
+    TagCreateSerializer,
+    TagSerializer,
 )
 from media.services.access_control import AccessControlService, FileAccessLevel
 from media.services.chunked_upload import get_chunked_upload_service
@@ -1001,4 +1004,455 @@ class QuotaStatusView(APIView):
         }
 
         serializer = QuotaStatusSerializer(data)
+        return Response(serializer.data)
+
+
+# =============================================================================
+# Tag Views
+# =============================================================================
+
+
+class TagListCreateView(APIView):
+    """
+    List and create tags.
+
+    GET /api/v1/media/tags/
+        List user's tags and accessible system/auto tags.
+
+    POST /api/v1/media/tags/
+        Create a new user tag.
+
+    Authentication:
+        Requires valid JWT token.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="list_tags",
+        summary="List tags",
+        description="List user's tags and accessible system/auto tags.",
+        responses={
+            200: OpenApiResponse(
+                response=TagSerializer(many=True),
+                description="List of tags",
+            ),
+        },
+        tags=["Tags"],
+    )
+    def get(self, request):
+        """List tags accessible to the user."""
+        from django.db.models import Q
+
+        # Get user's tags + global tags (system/auto)
+        tags = Tag.objects.filter(
+            Q(owner=request.user) | Q(owner__isnull=True)
+        ).order_by("name")
+
+        serializer = TagSerializer(tags, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        operation_id="create_tag",
+        summary="Create tag",
+        description="Create a new user tag.",
+        request=TagCreateSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=TagSerializer,
+                description="Tag created",
+            ),
+            400: OpenApiResponse(description="Validation error"),
+        },
+        tags=["Tags"],
+    )
+    def post(self, request):
+        """Create a new user tag."""
+        serializer = TagCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tag = serializer.save()
+        output_serializer = TagSerializer(tag)
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+
+
+class TagDetailView(APIView):
+    """
+    Get or delete a specific tag.
+
+    GET /api/v1/media/tags/{tag_id}/
+        Get tag details.
+
+    DELETE /api/v1/media/tags/{tag_id}/
+        Delete a user tag (only owner can delete).
+
+    Authentication:
+        Requires valid JWT token.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_tag(self, request, tag_id):
+        """Get tag if user has access."""
+        from django.db.models import Q
+
+        try:
+            return Tag.objects.get(
+                Q(pk=tag_id),
+                Q(owner=request.user) | Q(owner__isnull=True),
+            )
+        except Tag.DoesNotExist:
+            return None
+
+    @extend_schema(
+        operation_id="get_tag",
+        summary="Get tag",
+        description="Get tag details.",
+        responses={
+            200: OpenApiResponse(
+                response=TagSerializer,
+                description="Tag details",
+            ),
+            404: OpenApiResponse(description="Tag not found"),
+        },
+        tags=["Tags"],
+    )
+    def get(self, request, tag_id):
+        """Get tag details."""
+        tag = self._get_tag(request, tag_id)
+        if not tag:
+            return Response(
+                {"error": "Tag not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = TagSerializer(tag)
+        return Response(serializer.data)
+
+    @extend_schema(
+        operation_id="delete_tag",
+        summary="Delete tag",
+        description="Delete a user tag. System tags cannot be deleted.",
+        responses={
+            204: OpenApiResponse(description="Tag deleted"),
+            403: OpenApiResponse(description="Cannot delete system/auto tags"),
+            404: OpenApiResponse(description="Tag not found"),
+        },
+        tags=["Tags"],
+    )
+    def delete(self, request, tag_id):
+        """Delete a user tag."""
+        tag = self._get_tag(request, tag_id)
+        if not tag:
+            return Response(
+                {"error": "Tag not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Only allow deleting user's own tags
+        if not tag.is_user_tag or tag.owner != request.user:
+            return Response(
+                {"error": "Cannot delete system or auto-generated tags"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tag.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class MediaFileTagsView(APIView):
+    """
+    List and apply tags to a media file.
+
+    GET /api/v1/media/files/{file_id}/tags/
+        List tags applied to the file.
+
+    POST /api/v1/media/files/{file_id}/tags/
+        Apply a tag to the file.
+
+    Authentication:
+        Requires valid JWT token.
+        User must have EDIT access to the file.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_media_file(self, request, file_id):
+        """Get media file with access check."""
+        try:
+            media_file = MediaFile.objects.get(pk=file_id)
+        except MediaFile.DoesNotExist:
+            return None, None
+
+        access_level = AccessControlService.check_access(media_file, request.user)
+        return media_file, access_level
+
+    @extend_schema(
+        operation_id="list_file_tags",
+        summary="List file tags",
+        description="List tags applied to a media file.",
+        responses={
+            200: OpenApiResponse(
+                response=MediaFileTagSerializer(many=True),
+                description="List of tags",
+            ),
+            403: OpenApiResponse(description="Access denied"),
+            404: OpenApiResponse(description="File not found"),
+        },
+        tags=["Tags"],
+    )
+    def get(self, request, file_id):
+        """List tags applied to the file."""
+        media_file, access_level = self._get_media_file(request, file_id)
+
+        if not media_file:
+            return Response(
+                {"error": "File not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if access_level == FileAccessLevel.NONE:
+            return Response(
+                {"error": "Access denied"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tags = MediaFileTag.objects.filter(media_file=media_file).select_related(
+            "tag", "applied_by"
+        )
+        serializer = MediaFileTagSerializer(tags, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        operation_id="apply_tag",
+        summary="Apply tag to file",
+        description="Apply a tag to a media file. Creates user tag if needed.",
+        request=ApplyTagSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=MediaFileTagSerializer,
+                description="Tag applied",
+            ),
+            400: OpenApiResponse(description="Validation error"),
+            403: OpenApiResponse(description="Access denied"),
+            404: OpenApiResponse(description="File not found"),
+        },
+        tags=["Tags"],
+    )
+    def post(self, request, file_id):
+        """Apply a tag to the file."""
+        media_file, access_level = self._get_media_file(request, file_id)
+
+        if not media_file:
+            return Response(
+                {"error": "File not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if access_level not in (FileAccessLevel.EDIT, FileAccessLevel.OWNER):
+            return Response(
+                {"error": "You don't have permission to tag this file"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = ApplyTagSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get or create the tag
+        tag_id = serializer.validated_data.get("tag_id")
+        tag_name = serializer.validated_data.get("tag_name")
+
+        if tag_id:
+            tag = Tag.objects.get(pk=tag_id)
+        else:
+            # Create user tag if it doesn't exist
+            tag, _ = Tag.get_or_create_user_tag(
+                name=tag_name,
+                owner=request.user,
+            )
+
+        # Apply the tag
+        association, created = media_file.add_tag(tag, applied_by=request.user)
+
+        output_serializer = MediaFileTagSerializer(association)
+        return Response(
+            output_serializer.data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class MediaFileTagDeleteView(APIView):
+    """
+    Remove a tag from a media file.
+
+    DELETE /api/v1/media/files/{file_id}/tags/{tag_id}/
+        Remove a tag from the file.
+
+    Authentication:
+        Requires valid JWT token.
+        User must have EDIT access to the file.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="remove_file_tag",
+        summary="Remove tag from file",
+        description="Remove a tag from a media file.",
+        responses={
+            204: OpenApiResponse(description="Tag removed"),
+            403: OpenApiResponse(description="Access denied"),
+            404: OpenApiResponse(description="File or tag not found"),
+        },
+        tags=["Tags"],
+    )
+    def delete(self, request, file_id, tag_id):
+        """Remove a tag from the file."""
+        try:
+            media_file = MediaFile.objects.get(pk=file_id)
+        except MediaFile.DoesNotExist:
+            return Response(
+                {"error": "File not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        access_level = AccessControlService.check_access(media_file, request.user)
+        if access_level not in (FileAccessLevel.EDIT, FileAccessLevel.OWNER):
+            return Response(
+                {"error": "You don't have permission to untag this file"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            tag = Tag.objects.get(pk=tag_id)
+        except Tag.DoesNotExist:
+            return Response(
+                {"error": "Tag not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        deleted = media_file.remove_tag(tag)
+        if not deleted:
+            return Response(
+                {"error": "Tag was not applied to this file"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class FilesByTagView(APIView):
+    """
+    Query files by tags.
+
+    GET /api/v1/media/files/by-tags/
+        Get files matching specified tags.
+
+    Query Parameters:
+        tags: Comma-separated list of tag IDs
+        mode: "and" (all tags required) or "or" (any tag matches)
+
+    Authentication:
+        Requires valid JWT token.
+        Only returns files the user has access to.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="files_by_tags",
+        summary="Get files by tags",
+        description="Query files matching specified tags.",
+        parameters=[
+            {
+                "name": "tags",
+                "in": "query",
+                "required": True,
+                "description": "Comma-separated list of tag IDs",
+                "schema": {"type": "string"},
+            },
+            {
+                "name": "mode",
+                "in": "query",
+                "required": False,
+                "description": "Match mode: 'and' or 'or' (default: 'and')",
+                "schema": {"type": "string", "enum": ["and", "or"]},
+            },
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=MediaFileSerializer(many=True),
+                description="List of matching files",
+            ),
+            400: OpenApiResponse(description="Invalid parameters"),
+        },
+        tags=["Tags"],
+    )
+    def get(self, request):
+        """Get files matching specified tags."""
+        from django.db.models import Count, Q
+
+        tags_param = request.query_params.get("tags", "")
+        mode = request.query_params.get("mode", "and")
+
+        if not tags_param:
+            return Response(
+                {"error": "tags parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            tag_ids = [uuid.strip() for uuid in tags_param.split(",")]
+        except ValueError:
+            return Response(
+                {"error": "Invalid tag ID format"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if mode not in ("and", "or"):
+            return Response(
+                {"error": "mode must be 'and' or 'or'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Build base query for files user can access
+        base_query = MediaFile.objects.filter(
+            Q(uploader=request.user)
+            | Q(visibility=MediaFile.Visibility.SHARED)
+            | Q(shares__shared_with=request.user)
+        ).distinct()
+
+        # Filter by tags
+        if mode == "and":
+            # File must have ALL specified tags
+            files = (
+                base_query.filter(file_tags__tag_id__in=tag_ids)
+                .annotate(
+                    matching_tags=Count(
+                        "file_tags", filter=Q(file_tags__tag_id__in=tag_ids)
+                    )
+                )
+                .filter(matching_tags=len(tag_ids))
+            )
+        else:
+            # File must have ANY of the specified tags
+            files = base_query.filter(file_tags__tag_id__in=tag_ids).distinct()
+
+        serializer = MediaFileSerializer(
+            files,
+            many=True,
+            context={"request": request},
+        )
         return Response(serializer.data)

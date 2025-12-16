@@ -1196,6 +1196,161 @@ def recalculate_all_storage_quotas() -> dict:
     }
 
 
+# =============================================================================
+# Hard Delete Expired Files Task
+# =============================================================================
+
+
+@shared_task
+def hard_delete_expired_files() -> dict:
+    """
+    Permanent deletion of soft-deleted files past retention period.
+
+    Finds MediaFiles where:
+    - is_deleted=True
+    - deleted_at < (now - SOFT_DELETE_RETENTION_DAYS)
+
+    For each file:
+    1. Deletes associated MediaAssets and their storage files
+    2. Deletes associated MediaFileShares
+    3. Deletes associated MediaFileTags
+    4. Deletes the main file from storage
+    5. Hard deletes the MediaFile record
+
+    This task should be scheduled via celery-beat, e.g., daily at 2am.
+
+    Returns:
+        Dict with count of files permanently deleted.
+    """
+    import os
+
+    from django.conf import settings
+    from django.core.files.storage import default_storage
+
+    from media.models import MediaFile
+
+    retention_days = getattr(settings, "SOFT_DELETE_RETENTION_DAYS", 30)
+    threshold = timezone.now() - timedelta(days=retention_days)
+
+    # Find soft-deleted files past retention period
+    # Use all_objects to include soft-deleted records
+    expired_files = MediaFile.all_objects.filter(
+        is_deleted=True,
+        deleted_at__lt=threshold,
+    ).select_related("uploader")
+
+    deleted_count = 0
+    storage_freed_bytes = 0
+    errors = []
+
+    for media_file in expired_files:
+        try:
+            file_size = media_file.file_size
+            file_id = str(media_file.id)
+
+            with transaction.atomic():
+                # 1. Delete associated MediaAssets and their storage files
+                if hasattr(media_file, "assets"):
+                    for asset in media_file.assets.all():
+                        # Delete asset file from storage
+                        if asset.file and default_storage.exists(asset.file.name):
+                            try:
+                                default_storage.delete(asset.file.name)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to delete asset file: {e}",
+                                    extra={
+                                        "media_file_id": file_id,
+                                        "asset_id": str(asset.id),
+                                    },
+                                )
+                        asset.delete()
+
+                # 2. Delete associated MediaFileShares
+                if hasattr(media_file, "shares"):
+                    media_file.shares.all().delete()
+
+                # 3. Delete associated MediaFileTags
+                if hasattr(media_file, "file_tags"):
+                    media_file.file_tags.all().delete()
+
+                # 4. Delete the main file from storage
+                if media_file.file and default_storage.exists(media_file.file.name):
+                    try:
+                        # Try to delete the containing directory if empty after file deletion
+                        file_path = media_file.file.name
+                        default_storage.delete(file_path)
+
+                        # Clean up empty parent directories (for local storage)
+                        if hasattr(default_storage, "path"):
+                            # Local storage - try to clean up empty dirs
+                            try:
+                                file_dir = os.path.dirname(
+                                    default_storage.path(file_path)
+                                )
+                                while file_dir and file_dir != str(settings.MEDIA_ROOT):
+                                    if os.path.isdir(file_dir) and not os.listdir(
+                                        file_dir
+                                    ):
+                                        os.rmdir(file_dir)
+                                        file_dir = os.path.dirname(file_dir)
+                                    else:
+                                        break
+                            except OSError:
+                                pass  # Directory not empty or permission issue
+
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to delete main file: {e}",
+                            extra={"media_file_id": file_id},
+                        )
+
+                # 5. Hard delete the MediaFile record
+                # Use delete() on the instance directly to bypass soft delete
+                MediaFile.all_objects.filter(pk=media_file.pk).delete()
+
+            deleted_count += 1
+            storage_freed_bytes += file_size
+
+            logger.info(
+                "Permanently deleted expired media file",
+                extra={
+                    "media_file_id": file_id,
+                    "file_size": file_size,
+                    "deleted_at": media_file.deleted_at.isoformat()
+                    if media_file.deleted_at
+                    else None,
+                },
+            )
+
+        except Exception as e:
+            error_msg = f"Failed to hard delete {media_file.id}: {str(e)}"
+            errors.append(error_msg)
+            logger.error(
+                "Failed to permanently delete expired media file",
+                extra={
+                    "media_file_id": str(media_file.id),
+                    "error": str(e),
+                },
+            )
+
+    logger.info(
+        "Hard delete expired files task completed",
+        extra={
+            "deleted_count": deleted_count,
+            "storage_freed_bytes": storage_freed_bytes,
+            "error_count": len(errors),
+            "retention_days": retention_days,
+        },
+    )
+
+    return {
+        "deleted_count": deleted_count,
+        "storage_freed_bytes": storage_freed_bytes,
+        "errors": errors[:10] if errors else [],  # First 10 errors
+    }
+
+
 @shared_task
 def cleanup_orphaned_s3_multipart_uploads() -> dict:
     """
