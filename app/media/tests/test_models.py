@@ -548,21 +548,14 @@ class TestMediaFileRelationships:
             version=1,
         )
 
+        # Use create_new_version() to properly handle versioning constraints
         file_content2 = SimpleUploadedFile(
             "test_v2.txt", b"version 2", content_type="text/plain"
         )
-        new_version = MediaFile.objects.create(
-            file=file_content2,
-            original_filename="test.txt",
-            media_type=MediaFile.MediaType.DOCUMENT,
-            mime_type="text/plain",
-            file_size=9,
-            uploader=user,
-            version=2,
-            version_group=original,
-        )
+        new_version = original.create_new_version(file_content2, user)
 
-        assert new_version.version_group == original
+        assert new_version.version_group == original.version_group
+        assert new_version.version == 2
         assert new_version in original.versions.all()
 
 

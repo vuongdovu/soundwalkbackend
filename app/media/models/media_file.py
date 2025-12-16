@@ -5,7 +5,7 @@ Provides:
 - UUID primary key for security
 - Content-based media type classification
 - Soft delete support
-- Version tracking fields (logic deferred)
+- Version tracking with self-referential version groups
 - Processing and scan status tracking
 """
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from core.managers import SoftDeleteManager
@@ -23,6 +23,7 @@ from core.models import BaseModel
 
 if TYPE_CHECKING:
     from django.core.files.uploadedfile import UploadedFile
+    from django.db.models import QuerySet
 
 
 def media_upload_path(instance: "MediaFile", filename: str) -> str:
@@ -66,10 +67,11 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
         threat_name: Name of detected threat if infected.
         scanned_at: When the file was scanned.
 
-    Version Fields (columns only, logic deferred):
-        version: Version number of this file.
-        version_group: Reference to the original file in a version chain.
-        is_current: Whether this is the current version.
+    Version Fields:
+        version: Version number of this file (starts at 1).
+        version_group: Self-referential FK to the original file. Originals point
+            to themselves, enabling database constraints for versioning integrity.
+        is_current: Whether this is the current (active) version.
     """
 
     # =========================================================================
@@ -228,19 +230,20 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
     )
 
     # =========================================================================
-    # Version Fields (columns only, logic deferred)
+    # Version Fields
     # =========================================================================
 
     version = models.PositiveIntegerField(
         default=1,
-        help_text="Version number of this file",
+        help_text="Version number of this file (starts at 1 for originals)",
     )
 
+    # Self-referential FK for version grouping. Originals point to themselves.
+    # This pattern enables database constraints like "only one current per group"
+    # because NULL values don't participate in unique constraints properly.
     version_group = models.ForeignKey(
         "self",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
+        on_delete=models.CASCADE,
         related_name="versions",
         help_text="Reference to the original file in a version chain",
     )
@@ -248,7 +251,7 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
     is_current = models.BooleanField(
         default=True,
         db_index=True,
-        help_text="Whether this is the current version",
+        help_text="Whether this is the current (active) version",
     )
 
     # =========================================================================
@@ -285,6 +288,18 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
                 check=models.Q(version__gte=1),
                 name="media_file_version_at_least_one",
             ),
+            # Versioning constraints
+            # Only one file per version_group can have is_current=True
+            models.UniqueConstraint(
+                fields=["version_group"],
+                condition=models.Q(is_current=True),
+                name="media_file_unique_current_per_group",
+            ),
+            # Version numbers must be unique within a version_group
+            models.UniqueConstraint(
+                fields=["version_group", "version"],
+                name="media_file_unique_version_in_group",
+            ),
         ]
 
     # =========================================================================
@@ -292,8 +307,35 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
     # =========================================================================
 
     def __str__(self) -> str:
-        """Return string representation."""
-        return f"{self.original_filename} ({self.media_type})"
+        """Return string representation including version."""
+        return f"{self.original_filename} (v{self.version})"
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """
+        Override save to auto-populate version_group for new records.
+
+        This ensures that even direct MediaFile.objects.create() calls
+        result in valid version_group values (originals point to self).
+        The self-referential pattern is necessary because NULL values
+        don't participate in unique constraints properly.
+
+        For new records without version_group set, we:
+        1. Ensure the PK exists (UUID is generated before save)
+        2. Set version_group to self
+        3. Then save the record
+
+        Since UUIDs are generated client-side (uuid.uuid4() default), the
+        PK is available before the first save, allowing us to set the
+        self-reference in a single INSERT rather than INSERT + UPDATE.
+        """
+        is_new = self._state.adding
+
+        # For new records, set version_group to self before saving
+        if is_new and self.version_group_id is None:
+            # UUID is generated by default, so self.pk is already available
+            self.version_group_id = self.pk
+
+        super().save(*args, **kwargs)
 
     @classmethod
     def create_from_upload(
@@ -312,6 +354,10 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
         - Extracting original filename from the upload
         - Calculating file size
         - Setting default values
+        - Auto-setting version_group to self (via save override)
+
+        Note: Quota checking should be done by the caller before invoking
+        this method. Use serializers or check profile.can_upload() first.
 
         Args:
             file: The uploaded file object.
@@ -322,7 +368,8 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
             metadata: Optional metadata dict.
 
         Returns:
-            Created and saved MediaFile instance.
+            Created and saved MediaFile instance with version=1,
+            is_current=True, and version_group pointing to itself.
         """
         media_file = cls(
             file=file,
@@ -332,10 +379,119 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
             file_size=file.size,
             uploader=uploader,
             visibility=visibility,
+            version=1,
+            is_current=True,
         )
 
         if metadata:
             media_file.metadata = metadata
 
         media_file.save()
+        # version_group is auto-set in save() override
         return media_file
+
+    def create_new_version(
+        self,
+        new_file: "UploadedFile",
+        requesting_user: Any,
+    ) -> "MediaFile":
+        """
+        Create a new version of this file.
+
+        This method:
+        - Verifies the requesting user is the original uploader
+        - Checks storage quota before creating
+        - Marks all prior versions as not current
+        - Creates new version with incremented version number
+        - Updates user's storage quota
+
+        Uses transaction with select_for_update to prevent race conditions
+        when multiple versions are created simultaneously.
+
+        Args:
+            new_file: The uploaded file for the new version.
+            requesting_user: User attempting to create the version.
+
+        Returns:
+            The newly created MediaFile version.
+
+        Raises:
+            PermissionError: If requesting_user is not the uploader.
+            ValidationError: If storage quota would be exceeded.
+        """
+        from django.core.exceptions import ValidationError
+
+        # Ownership check - only the original uploader can create versions
+        if self.uploader_id != requesting_user.id:
+            raise PermissionError(
+                "Only the original uploader can create new versions of this file."
+            )
+
+        # Quota check - verify user has enough storage remaining
+        if hasattr(requesting_user, "profile"):
+            if not requesting_user.profile.can_upload(new_file.size):
+                raise ValidationError(
+                    "Storage quota exceeded. Please free up space or upgrade your plan."
+                )
+
+        with transaction.atomic():
+            # Lock the version group root to prevent race conditions
+            # when multiple versions are created simultaneously
+            group = MediaFile.all_objects.select_for_update().get(
+                pk=self.version_group_id
+            )
+
+            # Mark all versions in this group as not current
+            MediaFile.all_objects.filter(version_group=group).update(is_current=False)
+
+            # Get next version number (max + 1)
+            max_version = (
+                MediaFile.all_objects.filter(version_group=group).aggregate(
+                    max_v=models.Max("version")
+                )["max_v"]
+                or 0
+            )
+
+            # Create new version - explicitly set version_group
+            # The save() override only sets version_group when it's None
+            new_version = MediaFile(
+                file=new_file,
+                original_filename=new_file.name,
+                version_group=group,
+                version=max_version + 1,
+                is_current=True,
+                uploader=self.uploader,  # Preserve original uploader
+                media_type=self.media_type,  # Preserve media type
+                mime_type=self.mime_type,  # Preserve MIME type
+                file_size=new_file.size,
+                visibility=self.visibility,  # Preserve visibility
+            )
+            new_version.save()
+
+            # Update quota after successful save
+            if hasattr(requesting_user, "profile"):
+                requesting_user.profile.add_storage_usage(new_file.size)
+
+            return new_version
+
+    def get_version_history(self) -> "QuerySet[MediaFile]":
+        """
+        Get all versions in this file's version group.
+
+        Returns:
+            QuerySet of MediaFile ordered by version number descending
+            (most recent first).
+        """
+        return MediaFile.all_objects.filter(version_group=self.version_group).order_by(
+            "-version"
+        )
+
+    @property
+    def is_original(self) -> bool:
+        """
+        Check if this is the original (first) version.
+
+        Returns:
+            True if version == 1, False otherwise.
+        """
+        return self.version == 1
