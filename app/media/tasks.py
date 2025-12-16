@@ -1,7 +1,8 @@
 """
-Celery tasks for media file processing.
+Celery tasks for media file processing and scanning.
 
 This module provides async tasks for:
+- Scanning uploaded files for malware
 - Processing uploaded media files (thumbnail generation, transcoding)
 - Retrying failed processing jobs
 - Cleaning up stuck processing jobs
@@ -11,12 +12,21 @@ The processing pipeline is designed for reliability:
 - Atomic state transitions (no race conditions)
 - Proper error categorization (permanent vs transient)
 - Observability through structured logging
+- Fail-open malware scanning with circuit breaker
 
 Usage:
-    from media.tasks import process_media_file
+    from media.tasks import scan_file_for_malware, process_media_file
+    from celery import chain
 
-    # Queue a file for processing (typically called after upload)
-    process_media_file.delay(str(media_file.id))
+    # Create the scan -> process chain
+    task_chain = chain(
+        scan_file_for_malware.s(str(media_file.id)),
+        process_media_file.s(),
+    )
+    task_chain.delay()
+
+    # Or scan only
+    scan_file_for_malware.delay(str(media_file.id))
 
     # Retry all failed files (typically via celery-beat)
     retry_failed_processing.delay()
@@ -45,6 +55,182 @@ STUCK_PROCESSING_THRESHOLD_MINUTES = 30
 
 
 # =============================================================================
+# Malware Scanning Task
+# =============================================================================
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=300,
+    retry_kwargs={"max_retries": 3},
+    acks_late=True,
+)
+def scan_file_for_malware(self, media_file_id: str) -> dict:
+    """
+    Scan a media file for malware using ClamAV.
+
+    This task is designed to be the first step in a Celery chain:
+    - CLEAN: Returns dict to continue chain
+    - INFECTED: Quarantines file and rejects (stops chain)
+    - SKIPPED: Marks for rescan, returns dict to continue (fail-open)
+    - ERROR: Allows retry
+
+    Args:
+        media_file_id: UUID of the MediaFile to scan.
+
+    Returns:
+        Dict with scan status and media_file_id for chain continuation.
+
+    Raises:
+        Reject: For infected files or permanent failures.
+    """
+
+    from media.models import MediaFile
+    from media.services.quarantine import quarantine_infected_file
+    from media.services.scanner import MalwareScanner, ScanResult
+
+    # Convert string ID to UUID if needed
+    if isinstance(media_file_id, str):
+        file_id = UUID(media_file_id)
+    else:
+        file_id = media_file_id
+        media_file_id = str(media_file_id)
+
+    logger.info(
+        "Scanning media file for malware",
+        extra={"media_file_id": media_file_id},
+    )
+
+    # Load the media file
+    try:
+        media_file = MediaFile.objects.get(id=file_id)
+    except MediaFile.DoesNotExist:
+        logger.error(
+            "MediaFile not found for scanning",
+            extra={"media_file_id": media_file_id},
+        )
+        return {"status": "not_found", "media_file_id": media_file_id}
+
+    # Check idempotency - already scanned and clean?
+    if media_file.scan_status == MediaFile.ScanStatus.CLEAN:
+        logger.info(
+            "MediaFile already scanned and clean, skipping",
+            extra={"media_file_id": media_file_id},
+        )
+        return {
+            "status": "already_scanned",
+            "media_file_id": media_file_id,
+        }
+
+    # Check if already infected (shouldn't happen in normal flow)
+    if media_file.scan_status == MediaFile.ScanStatus.INFECTED:
+        logger.warning(
+            "MediaFile already marked as infected",
+            extra={"media_file_id": media_file_id},
+        )
+        raise Reject("File already quarantined", requeue=False)
+
+    # Perform the scan
+    scanner = MalwareScanner()
+    result = scanner.scan_media_file(media_file)
+
+    if result.status == ScanResult.CLEAN:
+        # File is clean - update status and continue chain
+        media_file.scan_status = MediaFile.ScanStatus.CLEAN
+        media_file.scanned_at = result.scanned_at
+        media_file.save(update_fields=["scan_status", "scanned_at", "updated_at"])
+
+        logger.info(
+            "Media file scanned clean",
+            extra={
+                "media_file_id": media_file_id,
+                "scan_method": result.scan_method,
+            },
+        )
+
+        return {
+            "status": "clean",
+            "media_file_id": media_file_id,
+        }
+
+    elif result.status == ScanResult.INFECTED:
+        # File is infected - quarantine and stop chain
+        logger.warning(
+            "Malware detected in media file",
+            extra={
+                "media_file_id": media_file_id,
+                "threat_name": result.threat_name,
+            },
+        )
+
+        # Quarantine the infected file
+        quarantine_result = quarantine_infected_file(media_file, result.threat_name)
+
+        if not quarantine_result.success:
+            logger.error(
+                "Failed to quarantine infected file",
+                extra={
+                    "media_file_id": media_file_id,
+                    "error": quarantine_result.error,
+                },
+            )
+
+        # Reject to stop the chain - infected files should not be processed
+        raise Reject(f"Malware detected: {result.threat_name}", requeue=False)
+
+    elif result.status == ScanResult.SKIPPED:
+        # Scanner unavailable (circuit open) - fail-open, mark for rescan
+        logger.warning(
+            "Malware scan skipped due to scanner unavailability",
+            extra={
+                "media_file_id": media_file_id,
+                "reason": result.skipped_reason,
+            },
+        )
+
+        # Keep scan_status as PENDING - will be picked up by rescan task
+        # Allow chain to continue (fail-open)
+        return {
+            "status": "skipped",
+            "media_file_id": media_file_id,
+            "reason": result.skipped_reason,
+        }
+
+    else:  # ScanResult.ERROR
+        # Scan error - allow retry
+        error_msg = result.error_message or "Unknown scan error"
+        logger.error(
+            "Malware scan error",
+            extra={
+                "media_file_id": media_file_id,
+                "error": error_msg,
+            },
+        )
+
+        # Update status to ERROR
+        media_file.scan_status = MediaFile.ScanStatus.ERROR
+        media_file.scanned_at = result.scanned_at
+        media_file.save(update_fields=["scan_status", "scanned_at", "updated_at"])
+
+        # Check retry count
+        if self.request.retries >= 3:
+            # Exhausted retries - fail-open, allow processing
+            logger.warning(
+                "Scan retries exhausted, allowing processing (fail-open)",
+                extra={"media_file_id": media_file_id},
+            )
+            return {
+                "status": "error_exhausted",
+                "media_file_id": media_file_id,
+            }
+
+        # Raise to trigger retry
+        raise ConnectionError(f"Scan error: {error_msg}")
+
+
+# =============================================================================
 # Main Processing Task
 # =============================================================================
 
@@ -57,12 +243,12 @@ STUCK_PROCESSING_THRESHOLD_MINUTES = 30
     retry_kwargs={"max_retries": MAX_PROCESSING_RETRIES},
     acks_late=True,
 )
-def process_media_file(self, media_file_id: str) -> dict:
+def process_media_file(self, scan_result: dict | str) -> dict:
     """
     Process an uploaded media file asynchronously.
 
     This task handles the complete processing pipeline:
-    1. Loads the MediaFile by ID
+    1. Loads the MediaFile by ID (from chain result or direct call)
     2. Checks idempotency (already processed? skip)
     3. Transitions state to PROCESSING
     4. Dispatches to appropriate processor based on media type
@@ -72,7 +258,8 @@ def process_media_file(self, media_file_id: str) -> dict:
     processing will be added in future phases.
 
     Args:
-        media_file_id: UUID of the MediaFile to process.
+        scan_result: Either a dict from scan_file_for_malware chain
+                    (with 'media_file_id' key) or a direct string UUID.
 
     Returns:
         Dict with processing result status.
@@ -83,6 +270,15 @@ def process_media_file(self, media_file_id: str) -> dict:
     """
     from media.models import MediaFile
     from media.processors.image import ImageProcessingError, generate_image_thumbnail
+
+    # Handle both chain input (dict) and direct call (str)
+    if isinstance(scan_result, dict):
+        media_file_id = scan_result.get("media_file_id")
+        if not media_file_id:
+            logger.error("Invalid scan result: missing media_file_id")
+            return {"status": "error", "error": "missing media_file_id"}
+    else:
+        media_file_id = scan_result
 
     # Convert string ID to UUID if needed
     if isinstance(media_file_id, str):
@@ -386,3 +582,147 @@ def cleanup_stuck_processing() -> dict:
         )
 
     return {"reset_count": reset_count}
+
+
+# =============================================================================
+# Scanning Tasks
+# =============================================================================
+
+
+@shared_task
+def rescan_skipped_files() -> dict:
+    """
+    Periodic task to rescan files that were skipped due to scanner outage.
+
+    Finds files with scan_status=PENDING (skipped) and re-queues them
+    for scanning. Should be scheduled via celery-beat, e.g., every 15 minutes.
+
+    Returns:
+        Dict with count of files queued for rescan.
+    """
+
+    from media.models import MediaFile
+
+    # Find files that need rescanning (PENDING status with processing complete)
+    files_to_scan = MediaFile.objects.filter(
+        scan_status=MediaFile.ScanStatus.PENDING,
+        processing_status=MediaFile.ProcessingStatus.READY,
+    ).order_by("created_at")[:50]  # Process in batches
+
+    queued_count = 0
+    for media_file in files_to_scan:
+        try:
+            # Re-run the scan (just scan, not full chain since already processed)
+            scan_file_for_malware.delay(str(media_file.id))
+            queued_count += 1
+
+            logger.info(
+                "Queued file for rescan",
+                extra={"media_file_id": str(media_file.id)},
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to queue file for rescan: {e}",
+                extra={"media_file_id": str(media_file.id)},
+            )
+
+    if queued_count > 0:
+        logger.info(
+            f"Queued {queued_count} files for rescan",
+            extra={"queued_count": queued_count},
+        )
+
+    return {"queued_count": queued_count}
+
+
+@shared_task
+def check_antivirus_health() -> dict:
+    """
+    Periodic task to check ClamAV connectivity and definition freshness.
+
+    Logs warnings if:
+    - Scanner is unavailable
+    - Circuit breaker is open
+    - Virus definitions are stale
+
+    This task should be scheduled via celery-beat, e.g., every 5 minutes.
+
+    Returns:
+        Dict with health status information.
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+
+    from media.services.scanner import MalwareScanner
+
+    scanner = MalwareScanner()
+    status = {
+        "available": False,
+        "circuit_state": "unknown",
+        "definitions": None,
+        "warnings": [],
+    }
+
+    # Check circuit breaker state
+    circuit_status = scanner.get_circuit_status()
+    status["circuit_state"] = circuit_status.get("state", "unknown")
+
+    if circuit_status.get("state") == "open":
+        status["warnings"].append("Circuit breaker is open - scanner may be unhealthy")
+        logger.warning(
+            "ClamAV circuit breaker is open",
+            extra={
+                "circuit_status": circuit_status,
+                "event_type": "antivirus_health_check",
+            },
+        )
+
+    # Check scanner availability
+    status["available"] = scanner.is_available()
+
+    if not status["available"]:
+        status["warnings"].append("Scanner is not available")
+        logger.warning(
+            "ClamAV scanner is not available",
+            extra={"event_type": "antivirus_health_check"},
+        )
+        return status
+
+    # Check virus definitions
+    definitions = scanner.check_definitions()
+    if definitions:
+        status["definitions"] = {
+            "version": definitions.version,
+            "signature_count": definitions.signature_count,
+            "last_update": definitions.last_update.isoformat()
+            if definitions.last_update
+            else None,
+        }
+
+        # Check if definitions are stale
+        if definitions.last_update:
+            stale_threshold = timedelta(days=settings.CLAMAV_STALE_DEFINITIONS_DAYS)
+            if timezone.now() - definitions.last_update > stale_threshold:
+                status["warnings"].append(
+                    f"Virus definitions are stale (older than {settings.CLAMAV_STALE_DEFINITIONS_DAYS} days)"
+                )
+                logger.warning(
+                    "ClamAV virus definitions are stale",
+                    extra={
+                        "event_type": "antivirus_health_check",
+                        "last_update": definitions.last_update.isoformat(),
+                        "threshold_days": settings.CLAMAV_STALE_DEFINITIONS_DAYS,
+                    },
+                )
+
+    if not status["warnings"]:
+        logger.info(
+            "ClamAV health check passed",
+            extra={
+                "event_type": "antivirus_health_check",
+                "definitions_version": status.get("definitions", {}).get("version"),
+            },
+        )
+
+    return status

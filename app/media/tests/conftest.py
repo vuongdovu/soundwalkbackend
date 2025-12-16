@@ -284,3 +284,102 @@ def pdf_with_txt_extension(sample_pdf: io.BytesIO) -> io.BytesIO:
     buffer = io.BytesIO(content)
     buffer.name = "actually_a_pdf.txt"
     return buffer
+
+
+# =============================================================================
+# Malware Scanning Fixtures
+# =============================================================================
+
+
+# EICAR test string - standard antivirus test signature
+# This is NOT malware - it's an industry-standard test pattern
+EICAR_TEST_STRING = (
+    b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+)
+
+
+@pytest.fixture
+def eicar_test_file() -> io.BytesIO:
+    """
+    Generate EICAR test file for antivirus testing.
+
+    The EICAR test string is a standard pattern recognized
+    by all antivirus software as a test signature. It is
+    NOT actual malware.
+    """
+    buffer = io.BytesIO(EICAR_TEST_STRING)
+    buffer.name = "eicar_test.txt"
+    return buffer
+
+
+@pytest.fixture
+def eicar_test_file_uploaded(eicar_test_file: io.BytesIO) -> SimpleUploadedFile:
+    """Return EICAR test file as SimpleUploadedFile."""
+    return SimpleUploadedFile(
+        name="eicar_test.txt",
+        content=eicar_test_file.read(),
+        content_type="text/plain",
+    )
+
+
+@pytest.fixture
+def mock_clamav_scanner():
+    """
+    Mock ClamAV scanner for unit tests.
+
+    Provides a mock that simulates ClamAV behavior without
+    requiring an actual ClamAV daemon.
+    """
+    from unittest.mock import MagicMock
+
+    mock = MagicMock()
+    mock.ping.return_value = True
+    mock.scan_stream.return_value = None  # Clean by default
+    mock.scan_file.return_value = None  # Clean by default
+    mock.version.return_value = "ClamAV 1.2.0/27234/Mon Dec 11 09:26:33 2024"
+    return mock
+
+
+@pytest.fixture
+def media_file_pending_scan(user: "User", sample_jpeg_uploaded: SimpleUploadedFile, db):
+    """
+    Create a MediaFile awaiting scan.
+
+    The file is in PENDING scan_status, as if just uploaded.
+    """
+    from pathlib import Path
+    from django.conf import settings
+    from media.models import MediaFile
+
+    # Create directory for test file
+    media_root = Path(settings.MEDIA_ROOT)
+    test_dir = media_root / "test_scans"
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write file to disk
+    file_path = test_dir / "test_scan_file.jpg"
+    file_path.write_bytes(sample_jpeg_uploaded.read())
+    sample_jpeg_uploaded.seek(0)
+
+    # Create MediaFile
+    media_file = MediaFile.objects.create(
+        file="test_scans/test_scan_file.jpg",
+        original_filename="test_image.jpg",
+        media_type=MediaFile.MediaType.IMAGE,
+        mime_type="image/jpeg",
+        file_size=sample_jpeg_uploaded.size,
+        uploader=user,
+        visibility=MediaFile.Visibility.PRIVATE,
+        scan_status=MediaFile.ScanStatus.PENDING,
+        processing_status=MediaFile.ProcessingStatus.PENDING,
+    )
+
+    yield media_file
+
+    # Cleanup
+    import shutil
+
+    if file_path.exists():
+        file_path.unlink()
+    if test_dir.exists():
+        shutil.rmtree(test_dir, ignore_errors=True)

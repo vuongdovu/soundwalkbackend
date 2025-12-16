@@ -131,11 +131,18 @@ class MediaFileUploadSerializer(serializers.Serializer):
         if hasattr(user, "profile"):
             user.profile.add_storage_usage(media_file.file_size)
 
-        # Trigger async processing (thumbnail generation, etc.)
+        # Trigger async scan -> process chain
         # Import here to avoid circular imports
-        from media.tasks import process_media_file
+        from celery import chain
 
-        process_media_file.delay(str(media_file.id))
+        from media.tasks import process_media_file, scan_file_for_malware
+
+        # Chain: scan first, then process if not infected
+        task_chain = chain(
+            scan_file_for_malware.s(str(media_file.id)),
+            process_media_file.s(),
+        )
+        task_chain.delay()
 
         return media_file
 

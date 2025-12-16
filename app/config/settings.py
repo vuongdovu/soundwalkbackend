@@ -396,6 +396,31 @@ ESCROW_MAX_HOLD_DURATION_DAYS = env.int(
 )
 
 # =============================================================================
+# ClamAV Configuration (Malware Scanning)
+# =============================================================================
+# ClamAV daemon connection settings
+CLAMAV_HOST = env("CLAMAV_HOST", default="clamav")
+CLAMAV_PORT = env.int("CLAMAV_PORT", default=3310)
+CLAMAV_TIMEOUT = env.int("CLAMAV_TIMEOUT", default=30)
+
+# Files larger than this threshold are scanned via file path instead of stream
+# Stream scanning loads file into memory; path scanning reads directly from disk
+CLAMAV_LARGE_FILE_THRESHOLD_MB = env.int("CLAMAV_LARGE_FILE_THRESHOLD_MB", default=50)
+
+# Circuit breaker settings for ClamAV resilience
+# Opens circuit after consecutive failures, allowing fail-open behavior
+CLAMAV_CIRCUIT_FAILURE_THRESHOLD = env.int(
+    "CLAMAV_CIRCUIT_FAILURE_THRESHOLD", default=5
+)
+CLAMAV_CIRCUIT_RECOVERY_TIMEOUT = env.int("CLAMAV_CIRCUIT_RECOVERY_TIMEOUT", default=60)
+
+# Alert if virus definitions are older than this many days
+CLAMAV_STALE_DEFINITIONS_DAYS = env.int("CLAMAV_STALE_DEFINITIONS_DAYS", default=3)
+
+# Quarantine directory for infected files (relative to MEDIA_ROOT)
+CLAMAV_QUARANTINE_DIR = env("CLAMAV_QUARANTINE_DIR", default="quarantine")
+
+# =============================================================================
 # Internationalization
 # =============================================================================
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

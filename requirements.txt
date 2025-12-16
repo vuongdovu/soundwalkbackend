@@ -64,6 +64,11 @@ Pillow==11.0.0                     # Image processing (required for ImageField)
 python-magic==0.4.27               # Content-based MIME type detection (requires libmagic1)
 
 # -----------------------------------------------------------------------------
+# Security Scanning
+# -----------------------------------------------------------------------------
+pyclamd==0.4.0                     # ClamAV daemon interface for malware scanning
+
+# -----------------------------------------------------------------------------
 # Payments
 # -----------------------------------------------------------------------------
 stripe==7.0.0                      # Stripe payment processing

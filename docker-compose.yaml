@@ -172,6 +172,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # ClamAV for malware scanning of uploaded files
+      clamav:
+        condition: service_healthy
     networks:
       - app-network
     healthcheck:
@@ -215,6 +218,36 @@ services:
     networks:
       - app-network
 
+  # ---------------------------------------------------------------------------
+  # ClamAV (Antivirus Scanning)
+  # ---------------------------------------------------------------------------
+  # Malware scanning for uploaded files via clamd daemon
+  clamav:
+    image: clamav/clamav:1.2
+    container_name: app-clamav
+    restart: unless-stopped
+    volumes:
+      # Read-only access to uploads for scanning
+      - media_volume:/app/uploads:ro
+      # Persist virus definitions across restarts (avoids re-downloading on startup)
+      - clamav_data:/var/lib/clamav
+    networks:
+      - app-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      # clamdscan --ping checks if the daemon is ready to accept scans
+      test: ["CMD", "clamdscan", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # ClamAV takes time to load virus definitions on startup
+      start_period: 120s
+
 # -----------------------------------------------------------------------------
 # Networks
 # -----------------------------------------------------------------------------
@@ -244,3 +277,7 @@ volumes:
   # Media files - user uploads, served by nginx
   media_volume:
     name: app-media
+
+  # ClamAV virus definitions - persist across container restarts
+  clamav_data:
+    name: app-clamav-data
