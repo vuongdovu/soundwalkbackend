@@ -142,7 +142,7 @@ class TestAtomicStorageOperations:
         assert user.profile.total_storage_bytes == 3000
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 class TestAtomicStorageOperationsConcurrent:
     """
     Tests for concurrent storage operations requiring real transactions.
@@ -150,6 +150,8 @@ class TestAtomicStorageOperationsConcurrent:
     These tests verify that F() expressions provide true atomicity
     under concurrent access. They require transaction=True for proper
     concurrency testing.
+
+    Note: serialized_rollback=True avoids TRUNCATE issues with FK constraints.
     """
 
     def test_add_storage_usage_is_atomic_concurrent(self):

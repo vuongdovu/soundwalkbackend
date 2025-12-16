@@ -111,3 +111,32 @@ def django_db_setup():
 def django_db_modify_db_settings():
     """Allow database modifications for testing."""
     pass
+
+
+def _patch_postgresql_flush_for_cascade():
+    """
+    Patch PostgreSQL flush to always use CASCADE.
+
+    This fixes the "cannot truncate a table referenced in a foreign key constraint"
+    error that occurs when TransactionTestCase tries to flush the database.
+
+    Django's TransactionTestCase uses TRUNCATE to reset the database, but without
+    CASCADE this fails when tables have foreign key constraints.
+    """
+    from django.db.backends.postgresql import operations
+
+    original_sql_flush = operations.DatabaseOperations.sql_flush
+
+    def sql_flush_with_cascade(
+        self, style, tables, *, reset_sequences=False, allow_cascade=False
+    ):
+        # Force CASCADE for PostgreSQL to handle FK constraints
+        return original_sql_flush(
+            self, style, tables, reset_sequences=reset_sequences, allow_cascade=True
+        )
+
+    operations.DatabaseOperations.sql_flush = sql_flush_with_cascade
+
+
+# Apply the patch when conftest is loaded
+_patch_postgresql_flush_for_cascade()

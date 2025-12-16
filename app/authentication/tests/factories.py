@@ -22,6 +22,7 @@ Usage:
 """
 
 import secrets
+import uuid
 from datetime import timedelta
 
 import factory
@@ -60,7 +61,8 @@ class UserFactory(factory.django.DjangoModelFactory):
         model = User
         skip_postgeneration_save = True
 
-    email = factory.Sequence(lambda n: f"user{n}@example.com")
+    # Use UUID to avoid email collisions across test runs
+    email = factory.LazyFunction(lambda: f"user_{uuid.uuid4().hex[:12]}@example.com")
     email_verified = False
     is_active = True
     is_staff = False

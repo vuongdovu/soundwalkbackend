@@ -56,7 +56,8 @@ class UserFactory(factory.django.DjangoModelFactory):
         model = "authentication.User"
         skip_postgeneration_save = True
 
-    email = factory.Sequence(lambda n: f"user{n}@example.com")
+    # Use UUID to avoid email collisions across test runs
+    email = factory.LazyFunction(lambda: f"user_{uuid.uuid4().hex[:12]}@example.com")
     password = factory.PostGenerationMethodCall("set_password", "testpass123")
     is_active = True
 
