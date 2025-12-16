@@ -10,11 +10,28 @@ Routes:
     POST /files/{file_id}/shares/ - Create a share
     DELETE /files/{file_id}/shares/{user_id}/ - Revoke a share
     GET /shared-with-me/ - List files shared with current user
+
+Chunked Upload Routes:
+    POST /chunked/sessions/ - Create upload session
+    GET /chunked/sessions/{id}/ - Get session status
+    DELETE /chunked/sessions/{id}/ - Abort upload
+    GET /chunked/sessions/{id}/parts/{num}/target/ - Get chunk upload target
+    PUT /chunked/sessions/{id}/parts/{num}/ - Upload chunk (local)
+    POST /chunked/sessions/{id}/parts/{num}/complete/ - Record completion (S3)
+    POST /chunked/sessions/{id}/finalize/ - Complete upload
+    GET /chunked/sessions/{id}/progress/ - Get progress
 """
 
 from django.urls import path
 
 from media.views import (
+    ChunkedUploadFinalizeView,
+    ChunkedUploadPartCompleteView,
+    ChunkedUploadPartTargetView,
+    ChunkedUploadPartView,
+    ChunkedUploadProgressView,
+    ChunkedUploadSessionDetailView,
+    ChunkedUploadSessionView,
     MediaFileDetailView,
     MediaFileDownloadView,
     MediaFileShareDeleteView,
@@ -46,5 +63,41 @@ urlpatterns = [
     ),
     path(
         "shared-with-me/", MediaFilesSharedWithMeView.as_view(), name="shared-with-me"
+    ),
+    # Chunked Upload
+    path(
+        "chunked/sessions/",
+        ChunkedUploadSessionView.as_view(),
+        name="chunked-session-create",
+    ),
+    path(
+        "chunked/sessions/<uuid:session_id>/",
+        ChunkedUploadSessionDetailView.as_view(),
+        name="chunked-session-detail",
+    ),
+    path(
+        "chunked/sessions/<uuid:session_id>/parts/<int:part_number>/target/",
+        ChunkedUploadPartTargetView.as_view(),
+        name="chunked-part-target",
+    ),
+    path(
+        "chunked/sessions/<uuid:session_id>/parts/<int:part_number>/",
+        ChunkedUploadPartView.as_view(),
+        name="chunked-part-upload",
+    ),
+    path(
+        "chunked/sessions/<uuid:session_id>/parts/<int:part_number>/complete/",
+        ChunkedUploadPartCompleteView.as_view(),
+        name="chunked-part-complete",
+    ),
+    path(
+        "chunked/sessions/<uuid:session_id>/finalize/",
+        ChunkedUploadFinalizeView.as_view(),
+        name="chunked-finalize",
+    ),
+    path(
+        "chunked/sessions/<uuid:session_id>/progress/",
+        ChunkedUploadProgressView.as_view(),
+        name="chunked-progress",
     ),
 ]

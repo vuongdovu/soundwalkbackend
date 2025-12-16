@@ -421,6 +421,25 @@ CLAMAV_STALE_DEFINITIONS_DAYS = env.int("CLAMAV_STALE_DEFINITIONS_DAYS", default
 CLAMAV_QUARANTINE_DIR = env("CLAMAV_QUARANTINE_DIR", default="quarantine")
 
 # =============================================================================
+# Chunked Upload Configuration
+# =============================================================================
+# Expiry time for upload sessions (in hours)
+CHUNKED_UPLOAD_EXPIRY_HOURS = env.int("CHUNKED_UPLOAD_EXPIRY_HOURS", default=24)
+
+# Default chunk size (in bytes) - 5MB is S3 minimum for multipart
+CHUNKED_UPLOAD_CHUNK_SIZE = env.int(
+    "CHUNKED_UPLOAD_CHUNK_SIZE", default=5 * 1024 * 1024
+)
+
+# Temporary directory for local chunked uploads (relative to MEDIA_ROOT)
+CHUNKED_UPLOAD_TEMP_DIR = env("CHUNKED_UPLOAD_TEMP_DIR", default="chunks")
+
+# Presigned URL expiry for S3 uploads (in seconds)
+CHUNKED_UPLOAD_PRESIGNED_URL_EXPIRY = env.int(
+    "CHUNKED_UPLOAD_PRESIGNED_URL_EXPIRY", default=3600
+)
+
+# =============================================================================
 # Internationalization
 # =============================================================================
 # https://docs.djangoproject.com/en/5.2/topics/i18n/

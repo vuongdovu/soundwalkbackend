@@ -20,13 +20,21 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from media.models import MediaFile
+from media.models import UploadSession
 from media.serializers import (
+    ChunkedUploadFinalizeResultSerializer,
+    ChunkedUploadInitSerializer,
+    ChunkedUploadProgressSerializer,
+    ChunkedUploadSessionSerializer,
+    ChunkTargetSerializer,
     MediaFileSerializer,
     MediaFileShareCreateSerializer,
     MediaFileShareSerializer,
     MediaFileUploadSerializer,
+    PartCompletionResultSerializer,
 )
 from media.services.access_control import AccessControlService, FileAccessLevel
+from media.services.chunked_upload import get_chunked_upload_service
 from media.services.delivery import FileDeliveryService
 
 
@@ -468,4 +476,470 @@ class MediaFilesSharedWithMeView(APIView):
             many=True,
             context={"request": request},
         )
+        return Response(serializer.data)
+
+
+# =============================================================================
+# Chunked Upload Views
+# =============================================================================
+
+
+class ChunkedUploadSessionView(APIView):
+    """
+    Create a new chunked upload session.
+
+    POST /api/v1/media/chunked/sessions/
+        Initialize a new chunked upload session.
+
+    Authentication:
+        Requires valid JWT token.
+
+    Request:
+        - filename (required): Original filename
+        - file_size (required): Total file size in bytes
+        - mime_type (required): MIME type of the file
+
+    Response:
+        201 Created: Session created with upload instructions
+        400 Bad Request: Validation error or quota exceeded
+        401 Unauthorized: Not authenticated
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Create chunked upload session",
+        description=(
+            "Initialize a new chunked upload session. Returns session ID, "
+            "chunk size, and total parts needed. Client uploads chunks to the "
+            "provided targets."
+        ),
+        request=ChunkedUploadInitSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=ChunkedUploadSessionSerializer,
+                description="Session created successfully",
+            ),
+            400: OpenApiResponse(description="Validation error or quota exceeded"),
+            401: OpenApiResponse(description="Not authenticated"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def post(self, request):
+        """Create a new chunked upload session."""
+        serializer = ChunkedUploadInitSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = get_chunked_upload_service()
+        result = service.create_session(
+            user=request.user,
+            filename=serializer.validated_data["filename"],
+            file_size=serializer.validated_data["file_size"],
+            mime_type=serializer.validated_data["mime_type"],
+            media_type=serializer.validated_data["media_type"],
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        output_serializer = ChunkedUploadSessionSerializer(result.data)
+        return Response(
+            output_serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ChunkedUploadSessionDetailView(APIView):
+    """
+    Get or delete a chunked upload session.
+
+    GET /api/v1/media/chunked/sessions/{session_id}/
+        Get session status and progress.
+
+    DELETE /api/v1/media/chunked/sessions/{session_id}/
+        Abort the upload and clean up.
+
+    Authentication:
+        Requires valid JWT token.
+        Only the session owner can access or abort.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get_session(self, session_id, user):
+        """Get session if it belongs to user."""
+        try:
+            return UploadSession.objects.get(pk=session_id, uploader=user)
+        except UploadSession.DoesNotExist:
+            return None
+
+    @extend_schema(
+        summary="Get upload session status",
+        description="Get the current status and progress of an upload session.",
+        responses={
+            200: OpenApiResponse(
+                response=ChunkedUploadSessionSerializer,
+                description="Session status",
+            ),
+            404: OpenApiResponse(description="Session not found"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def get(self, request, session_id):
+        """Get session status."""
+        session = self.get_session(session_id, request.user)
+        if not session:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChunkedUploadSessionSerializer(session)
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="Abort upload session",
+        description="Abort an in-progress upload and clean up resources.",
+        responses={
+            204: OpenApiResponse(description="Session aborted"),
+            404: OpenApiResponse(description="Session not found"),
+            409: OpenApiResponse(description="Session already completed"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def delete(self, request, session_id):
+        """Abort the upload session."""
+        session = self.get_session(session_id, request.user)
+        if not session:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        service = get_chunked_upload_service()
+        result = service.abort_upload(session)
+
+        if not result.success:
+            return Response(
+                {"error": result.error},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ChunkedUploadPartTargetView(APIView):
+    """
+    Get upload target for a specific chunk.
+
+    GET /api/v1/media/chunked/sessions/{session_id}/parts/{part_number}/target/
+        Get the URL and method to upload a specific chunk.
+
+    For local storage: Returns our server endpoint (direct=False)
+    For S3 storage: Returns presigned S3 URL (direct=True)
+
+    Authentication:
+        Requires valid JWT token.
+        Only the session owner can get targets.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Get chunk upload target",
+        description=(
+            "Get the upload target for a specific chunk. For local storage, "
+            "returns our server endpoint. For S3, returns a presigned URL."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=ChunkTargetSerializer,
+                description="Upload target information",
+            ),
+            400: OpenApiResponse(description="Invalid part number"),
+            404: OpenApiResponse(description="Session not found"),
+            410: OpenApiResponse(description="Session expired"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def get(self, request, session_id, part_number):
+        """Get upload target for a chunk."""
+        try:
+            session = UploadSession.objects.get(pk=session_id, uploader=request.user)
+        except UploadSession.DoesNotExist:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        service = get_chunked_upload_service()
+        result = service.get_chunk_target(session, part_number)
+
+        if not result.success:
+            if "expired" in result.error.lower():
+                return Response(
+                    {"error": result.error},
+                    status=status.HTTP_410_GONE,
+                )
+            return Response(
+                {"error": result.error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ChunkTargetSerializer(result.data)
+        return Response(serializer.data)
+
+
+class ChunkedUploadPartView(APIView):
+    """
+    Upload a chunk (local backend only).
+
+    PUT /api/v1/media/chunked/sessions/{session_id}/parts/{part_number}/
+        Upload raw binary chunk data.
+
+    This endpoint receives chunks for local storage. For S3, clients
+    upload directly to the presigned URL.
+
+    Authentication:
+        Requires valid JWT token.
+        Only the session owner can upload.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Upload chunk",
+        description="Upload a chunk to the server (local storage only).",
+        responses={
+            200: OpenApiResponse(
+                response=PartCompletionResultSerializer,
+                description="Chunk uploaded, progress updated",
+            ),
+            400: OpenApiResponse(description="Invalid chunk"),
+            404: OpenApiResponse(description="Session not found"),
+            409: OpenApiResponse(description="Invalid session status"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def put(self, request, session_id, part_number):
+        """Upload a chunk."""
+        try:
+            session = UploadSession.objects.get(pk=session_id, uploader=request.user)
+        except UploadSession.DoesNotExist:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Read raw binary body
+        chunk_data = request.body
+
+        if not chunk_data:
+            return Response(
+                {"error": "No chunk data provided"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = get_chunked_upload_service()
+        result = service.receive_chunk(session, part_number, chunk_data)
+
+        if not result.success:
+            if "status" in result.error.lower():
+                return Response(
+                    {"error": result.error},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            return Response(
+                {"error": result.error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = PartCompletionResultSerializer(result.data)
+        return Response(serializer.data)
+
+
+class ChunkedUploadPartCompleteView(APIView):
+    """
+    Record part completion (S3 backend).
+
+    POST /api/v1/media/chunked/sessions/{session_id}/parts/{part_number}/complete/
+        Record that a part was uploaded to S3.
+
+    For S3 uploads, clients upload directly to S3, then call this
+    endpoint to record the completion.
+
+    Authentication:
+        Requires valid JWT token.
+        Only the session owner can record completions.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Record part completion",
+        description="Record that a part was uploaded to S3 (S3 storage only).",
+        responses={
+            200: OpenApiResponse(
+                response=PartCompletionResultSerializer,
+                description="Part recorded, progress updated",
+            ),
+            400: OpenApiResponse(description="Invalid data"),
+            404: OpenApiResponse(description="Session not found"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def post(self, request, session_id, part_number):
+        """Record part completion."""
+        from media.serializers import ChunkedUploadPartCompleteSerializer
+
+        try:
+            session = UploadSession.objects.get(pk=session_id, uploader=request.user)
+        except UploadSession.DoesNotExist:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChunkedUploadPartCompleteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        service = get_chunked_upload_service()
+        result = service.record_completed_part(
+            session=session,
+            part_number=part_number,
+            etag=serializer.validated_data["etag"],
+            size=serializer.validated_data["part_size"],
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        output_serializer = PartCompletionResultSerializer(result.data)
+        return Response(output_serializer.data)
+
+
+class ChunkedUploadFinalizeView(APIView):
+    """
+    Finalize the upload and create MediaFile.
+
+    POST /api/v1/media/chunked/sessions/{session_id}/finalize/
+        Complete the upload, assemble chunks, create MediaFile.
+
+    This endpoint:
+    - Verifies all parts are present
+    - Assembles chunks into final file
+    - Creates MediaFile record
+    - Updates storage quota
+    - Triggers scan/process pipeline
+    - Cleans up temporary resources
+
+    Authentication:
+        Requires valid JWT token.
+        Only the session owner can finalize.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Finalize upload",
+        description=(
+            "Complete the upload and create the MediaFile. "
+            "Assembles chunks, updates quota, triggers processing."
+        ),
+        responses={
+            201: OpenApiResponse(
+                response=ChunkedUploadFinalizeResultSerializer,
+                description="Upload complete, MediaFile created",
+            ),
+            400: OpenApiResponse(description="Missing parts or invalid state"),
+            404: OpenApiResponse(description="Session not found"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def post(self, request, session_id):
+        """Finalize the upload."""
+        try:
+            session = UploadSession.objects.get(pk=session_id, uploader=request.user)
+        except UploadSession.DoesNotExist:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        service = get_chunked_upload_service()
+        result = service.finalize_upload(session)
+
+        if not result.success:
+            return Response(
+                {"error": result.error},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        media_file = result.data
+        output = {
+            "media_file_id": str(media_file.id),
+            "message": "Upload complete. File is being processed.",
+        }
+        serializer = ChunkedUploadFinalizeResultSerializer(output)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ChunkedUploadProgressView(APIView):
+    """
+    Get upload progress.
+
+    GET /api/v1/media/chunked/sessions/{session_id}/progress/
+        Get detailed progress information.
+
+    Authentication:
+        Requires valid JWT token.
+        Only the session owner can view progress.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Get upload progress",
+        description="Get detailed progress information for an upload session.",
+        responses={
+            200: OpenApiResponse(
+                response=ChunkedUploadProgressSerializer,
+                description="Progress information",
+            ),
+            404: OpenApiResponse(description="Session not found"),
+        },
+        tags=["Chunked Upload"],
+    )
+    def get(self, request, session_id):
+        """Get progress information."""
+        try:
+            session = UploadSession.objects.get(pk=session_id, uploader=request.user)
+        except UploadSession.DoesNotExist:
+            return Response(
+                {"error": "Upload session not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        service = get_chunked_upload_service()
+        progress = service.get_session_progress(session)
+        serializer = ChunkedUploadProgressSerializer(progress)
         return Response(serializer.data)

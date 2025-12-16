@@ -1,11 +1,15 @@
 """
-Serializers for media file uploads and sharing.
+Serializers for media file uploads, sharing, and chunked uploads.
 
 Provides:
 - MediaFileUploadSerializer: Handle file upload with validation
 - MediaFileSerializer: Read-only serializer for API responses
 - MediaFileShareSerializer: Read-only serializer for share responses
 - MediaFileShareCreateSerializer: Create/update shares
+- ChunkedUploadInitSerializer: Initialize chunked upload session
+- ChunkedUploadSessionSerializer: Session status and progress
+- ChunkTargetSerializer: Chunk upload target information
+- PartCompletionResultSerializer: Part completion result
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from rest_framework import serializers
 
 from authentication.models import User
-from media.models import MediaFile, MediaFileShare
+from media.models import MediaFile, MediaFileShare, UploadSession
 from media.validators import MediaValidator
 
 if TYPE_CHECKING:
@@ -312,3 +316,160 @@ class MediaFileShareCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(result.error)
 
         return result.data
+
+
+# =============================================================================
+# Chunked Upload Serializers
+# =============================================================================
+
+
+class ChunkedUploadInitSerializer(serializers.Serializer):
+    """
+    Serializer for initializing a chunked upload session.
+
+    Validates the file metadata and returns session information.
+    """
+
+    filename = serializers.CharField(max_length=255)
+    file_size = serializers.IntegerField(min_value=1)
+    mime_type = serializers.CharField(max_length=100)
+
+    # Media type mapping from MIME type
+    MIME_TO_MEDIA_TYPE = {
+        "image/": "image",
+        "video/": "video",
+        "audio/": "audio",
+        "application/pdf": "document",
+        "application/msword": "document",
+        "application/vnd.openxmlformats-officedocument": "document",
+        "text/": "document",
+    }
+
+    def validate_mime_type(self, value: str) -> str:
+        """Validate and normalize MIME type."""
+        if "/" not in value:
+            raise serializers.ValidationError("Invalid MIME type format.")
+        return value.lower()
+
+    def validate(self, attrs: dict) -> dict:
+        """Derive media_type from mime_type."""
+        mime_type = attrs["mime_type"]
+
+        # Determine media type from MIME type
+        media_type = "other"
+        for prefix, m_type in self.MIME_TO_MEDIA_TYPE.items():
+            if mime_type.startswith(prefix):
+                media_type = m_type
+                break
+
+        attrs["media_type"] = media_type
+        return attrs
+
+
+class ChunkedUploadPartCompleteSerializer(serializers.Serializer):
+    """
+    Serializer for recording a completed part upload (S3 flow).
+
+    Used when the client uploads directly to S3 and needs to inform
+    our server about the completion.
+    """
+
+    etag = serializers.CharField(max_length=200)
+    part_size = serializers.IntegerField(min_value=1)
+
+
+class ChunkedUploadSessionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for chunked upload session details.
+
+    Returns all information needed for the client to track and complete the upload.
+    """
+
+    session_id = serializers.UUIDField(source="id", read_only=True)
+    parts_completed = serializers.SerializerMethodField()
+    progress_percent = serializers.FloatField(read_only=True)
+    total_parts = serializers.IntegerField(read_only=True)
+    is_complete = serializers.BooleanField(source="is_upload_complete", read_only=True)
+
+    class Meta:
+        model = UploadSession
+        fields = [
+            "session_id",
+            "filename",
+            "file_size",
+            "mime_type",
+            "media_type",
+            "bytes_received",
+            "parts_completed",
+            "total_parts",
+            "progress_percent",
+            "chunk_size",
+            "status",
+            "expires_at",
+            "is_complete",
+            "backend",
+        ]
+        read_only_fields = fields
+
+    def get_parts_completed(self, obj: UploadSession) -> int:
+        """Return count of completed parts."""
+        return obj.parts_completed_count
+
+
+class ChunkTargetSerializer(serializers.Serializer):
+    """
+    Serializer for chunk upload target information.
+
+    Tells the client where and how to upload a specific chunk.
+    """
+
+    upload_url = serializers.CharField()
+    part_number = serializers.IntegerField()
+    method = serializers.CharField()
+    direct = serializers.BooleanField()
+    expires_in = serializers.IntegerField(allow_null=True, required=False)
+    headers = serializers.DictField(
+        child=serializers.CharField(),
+        allow_null=True,
+        required=False,
+    )
+
+
+class PartCompletionResultSerializer(serializers.Serializer):
+    """
+    Serializer for part completion result.
+
+    Returns progress information after a chunk is uploaded.
+    """
+
+    bytes_received = serializers.IntegerField()
+    parts_completed = serializers.IntegerField()
+    is_complete = serializers.BooleanField()
+
+
+class ChunkedUploadProgressSerializer(serializers.Serializer):
+    """
+    Serializer for progress information.
+
+    Provides a summary of upload progress.
+    """
+
+    session_id = serializers.CharField()
+    filename = serializers.CharField()
+    file_size = serializers.IntegerField()
+    bytes_received = serializers.IntegerField()
+    parts_completed = serializers.IntegerField()
+    total_parts = serializers.IntegerField()
+    progress_percent = serializers.FloatField()
+    status = serializers.CharField()
+
+
+class ChunkedUploadFinalizeResultSerializer(serializers.Serializer):
+    """
+    Serializer for finalization result.
+
+    Returns the created MediaFile ID.
+    """
+
+    media_file_id = serializers.UUIDField()
+    message = serializers.CharField()

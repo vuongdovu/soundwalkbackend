@@ -852,3 +852,305 @@ def check_antivirus_health() -> dict:
         )
 
     return status
+
+
+# =============================================================================
+# Chunked Upload Cleanup Tasks
+# =============================================================================
+
+
+@shared_task
+def cleanup_expired_upload_sessions() -> dict:
+    """
+    Periodic task to clean up expired upload sessions.
+
+    Finds IN_PROGRESS sessions that have expired and:
+    1. Aborts any associated S3 multipart uploads
+    2. Deletes local temp directories
+    3. Marks sessions as EXPIRED
+
+    This task should be scheduled via celery-beat, e.g., every hour.
+
+    Returns:
+        Dict with count of sessions cleaned up.
+    """
+    import os
+    import shutil
+
+    from media.models import UploadSession
+
+    # Find expired in-progress sessions
+    expired_sessions = UploadSession.objects.filter(
+        status=UploadSession.Status.IN_PROGRESS,
+        expires_at__lt=timezone.now(),
+    )
+
+    cleaned_count = 0
+    local_cleaned = 0
+    s3_cleaned = 0
+    errors = []
+
+    for session in expired_sessions:
+        try:
+            if session.backend == UploadSession.Backend.LOCAL:
+                # Clean up local temp directory
+                if session.local_temp_dir and os.path.exists(session.local_temp_dir):
+                    shutil.rmtree(session.local_temp_dir)
+                local_cleaned += 1
+            elif session.backend == UploadSession.Backend.S3:
+                # Abort S3 multipart upload
+                try:
+                    import boto3
+                    from django.core.files.storage import default_storage
+
+                    bucket_name = getattr(default_storage, "bucket_name", None)
+                    if bucket_name and session.s3_key and session.s3_upload_id:
+                        s3_client = boto3.client("s3")
+                        s3_client.abort_multipart_upload(
+                            Bucket=bucket_name,
+                            Key=session.s3_key,
+                            UploadId=session.s3_upload_id,
+                        )
+                    s3_cleaned += 1
+                except ImportError:
+                    # boto3 not installed, skip S3 cleanup
+                    pass
+                except Exception as e:
+                    errors.append(f"S3 cleanup error for {session.id}: {str(e)}")
+
+            # Mark session as expired
+            session.status = UploadSession.Status.EXPIRED
+            session.save()
+            cleaned_count += 1
+
+        except Exception as e:
+            errors.append(f"Error cleaning session {session.id}: {str(e)}")
+            logger.error(
+                "Failed to clean up expired upload session",
+                extra={
+                    "event_type": "upload_session_cleanup_error",
+                    "session_id": str(session.id),
+                    "error": str(e),
+                },
+            )
+
+    logger.info(
+        "Expired upload sessions cleaned up",
+        extra={
+            "event_type": "upload_session_cleanup",
+            "cleaned_count": cleaned_count,
+            "local_cleaned": local_cleaned,
+            "s3_cleaned": s3_cleaned,
+            "error_count": len(errors),
+        },
+    )
+
+    return {
+        "cleaned_count": cleaned_count,
+        "local_cleaned": local_cleaned,
+        "s3_cleaned": s3_cleaned,
+        "errors": errors,
+    }
+
+
+@shared_task
+def cleanup_orphaned_local_temp_dirs() -> dict:
+    """
+    Safety net task to clean up local temp directories without matching sessions.
+
+    Scans the chunked upload temp directory for subdirectories that:
+    1. Don't have a matching IN_PROGRESS session
+    2. Are older than the expiry threshold
+
+    This handles cases where the app crashed before marking a session as failed.
+    Schedule via celery-beat, e.g., daily.
+
+    Returns:
+        Dict with count of directories removed.
+    """
+    import os
+    import shutil
+
+    from django.conf import settings
+
+    from media.models import UploadSession
+
+    # Get temp base directory
+    temp_base = getattr(settings, "CHUNKED_UPLOAD_TEMP_DIR", None)
+    if not temp_base:
+        temp_base = os.path.join(settings.MEDIA_ROOT, "chunks")
+
+    if not os.path.isdir(temp_base):
+        return {"removed_count": 0, "message": "Temp directory does not exist"}
+
+    # Get all active session IDs
+    active_session_ids = set(
+        str(sid)
+        for sid in UploadSession.objects.filter(
+            status=UploadSession.Status.IN_PROGRESS
+        ).values_list("id", flat=True)
+    )
+
+    removed_count = 0
+    errors = []
+
+    # Expiry threshold for orphaned directories (same as session expiry)
+    expiry_hours = getattr(settings, "CHUNKED_UPLOAD_EXPIRY_HOURS", 24)
+    threshold = timezone.now() - timedelta(hours=expiry_hours)
+
+    for entry in os.scandir(temp_base):
+        if not entry.is_dir():
+            continue
+
+        dir_name = entry.name
+
+        # Skip if there's an active session for this directory
+        if dir_name in active_session_ids:
+            continue
+
+        # Check directory age
+        dir_mtime = timezone.datetime.fromtimestamp(
+            entry.stat().st_mtime, tz=timezone.utc
+        )
+        if dir_mtime > threshold:
+            # Directory is too new, might be in-use
+            continue
+
+        try:
+            shutil.rmtree(entry.path)
+            removed_count += 1
+            logger.info(
+                "Removed orphaned temp directory",
+                extra={
+                    "event_type": "orphaned_temp_cleanup",
+                    "directory": dir_name,
+                },
+            )
+        except Exception as e:
+            errors.append(f"Failed to remove {dir_name}: {str(e)}")
+
+    logger.info(
+        "Orphaned temp directory cleanup complete",
+        extra={
+            "event_type": "orphaned_temp_cleanup_complete",
+            "removed_count": removed_count,
+            "error_count": len(errors),
+        },
+    )
+
+    return {
+        "removed_count": removed_count,
+        "errors": errors,
+    }
+
+
+@shared_task
+def cleanup_orphaned_s3_multipart_uploads() -> dict:
+    """
+    Safety net task to clean up S3 multipart uploads without matching sessions.
+
+    Lists incomplete multipart uploads in the bucket that:
+    1. Don't have a matching IN_PROGRESS session
+    2. Were initiated more than the expiry threshold ago
+
+    This handles cases where the app crashed before aborting an upload.
+    Schedule via celery-beat, e.g., daily.
+
+    Returns:
+        Dict with count of uploads aborted.
+    """
+    try:
+        import boto3
+        from django.core.files.storage import default_storage
+    except ImportError:
+        return {"aborted_count": 0, "message": "boto3 not installed"}
+
+    # Only run if using S3 storage
+    if not hasattr(default_storage, "bucket"):
+        return {"aborted_count": 0, "message": "Not using S3 storage"}
+
+    from django.conf import settings as django_settings
+
+    from media.models import UploadSession
+
+    bucket_name = getattr(default_storage, "bucket_name", None)
+    if not bucket_name:
+        return {"aborted_count": 0, "message": "No bucket name configured"}
+
+    s3_client = boto3.client("s3")
+
+    # Get active S3 upload IDs
+    active_upload_ids = set(
+        UploadSession.objects.filter(
+            status=UploadSession.Status.IN_PROGRESS,
+            backend=UploadSession.Backend.S3,
+        ).values_list("s3_upload_id", flat=True)
+    )
+
+    # Expiry threshold
+    expiry_hours = getattr(django_settings, "CHUNKED_UPLOAD_EXPIRY_HOURS", 24)
+    threshold = timezone.now() - timedelta(hours=expiry_hours)
+
+    aborted_count = 0
+    errors = []
+
+    try:
+        # List incomplete multipart uploads
+        response = s3_client.list_multipart_uploads(
+            Bucket=bucket_name,
+            Prefix="uploads/pending/",  # Only scan chunked upload area
+        )
+
+        for upload in response.get("Uploads", []):
+            upload_id = upload["UploadId"]
+            initiated = upload["Initiated"]
+
+            # Skip if there's an active session for this upload
+            if upload_id in active_upload_ids:
+                continue
+
+            # Skip if too new
+            if initiated.replace(tzinfo=timezone.utc) > threshold:
+                continue
+
+            try:
+                s3_client.abort_multipart_upload(
+                    Bucket=bucket_name,
+                    Key=upload["Key"],
+                    UploadId=upload_id,
+                )
+                aborted_count += 1
+                logger.info(
+                    "Aborted orphaned S3 multipart upload",
+                    extra={
+                        "event_type": "orphaned_s3_cleanup",
+                        "upload_id": upload_id,
+                        "key": upload["Key"],
+                    },
+                )
+            except Exception as e:
+                errors.append(f"Failed to abort {upload_id}: {str(e)}")
+
+    except Exception as e:
+        logger.error(
+            "Failed to list multipart uploads",
+            extra={
+                "event_type": "orphaned_s3_cleanup_error",
+                "error": str(e),
+            },
+        )
+        return {"aborted_count": 0, "error": str(e)}
+
+    logger.info(
+        "Orphaned S3 multipart upload cleanup complete",
+        extra={
+            "event_type": "orphaned_s3_cleanup_complete",
+            "aborted_count": aborted_count,
+            "error_count": len(errors),
+        },
+    )
+
+    return {
+        "aborted_count": aborted_count,
+        "errors": errors,
+    }
