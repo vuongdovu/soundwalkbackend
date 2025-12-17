@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVectorField
 from django.db import models, transaction
 from django.utils import timezone
 
@@ -255,6 +257,16 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
     )
 
     # =========================================================================
+    # Search Fields
+    # =========================================================================
+
+    search_vector = SearchVectorField(
+        null=True,
+        blank=True,
+        help_text="Full-text search vector combining filename, tags, and content",
+    )
+
+    # =========================================================================
     # Managers
     # =========================================================================
 
@@ -292,6 +304,11 @@ class MediaFile(UUIDPrimaryKeyMixin, SoftDeleteMixin, MetadataMixin, BaseModel):
                 fields=["uploader", "is_deleted", "-created_at"],
                 name="idx_active_files",
                 condition=models.Q(is_deleted=False),
+            ),
+            # Full-text search index
+            GinIndex(
+                fields=["search_vector"],
+                name="idx_media_search_vector",
             ),
         ]
 

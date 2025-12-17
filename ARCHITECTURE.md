@@ -1,6 +1,6 @@
 # Project Architecture
 
-> Last generated: 2025-12-15 UTC
+> Last generated: 2025-12-17 UTC
 
 ## Table of Contents
 
@@ -111,6 +111,7 @@ flowchart TD
         payments[payments<br/><i>Stripe, escrow, ledger</i>]
         notifications[notifications<br/><i>Push, email, websocket</i>]
         chat[chat<br/><i>Conversations, messages</i>]
+        media[media<br/><i>Files, uploads, search</i>]
     end
 
     subgraph Config["Configuration"]
@@ -122,11 +123,13 @@ flowchart TD
     payments --> core
     notifications --> core
     chat --> core
+    media --> core
 
     %% Auth dependencies
     payments --> auth
     notifications --> auth
     chat --> auth
+    media --> auth
 
     %% Toolkit is used by domain apps
     auth -.-> toolkit
@@ -138,6 +141,7 @@ flowchart TD
     config --> payments
     config --> notifications
     config --> chat
+    config --> media
 
     style core fill:#e1f5fe
     style toolkit fill:#e1f5fe
@@ -145,6 +149,7 @@ flowchart TD
     style payments fill:#fff3e0
     style notifications fill:#fff3e0
     style chat fill:#fff3e0
+    style media fill:#fff3e0
     style config fill:#f3e5f5
 ```
 
@@ -265,6 +270,52 @@ erDiagram
     NotificationType ||--o{ Notification : defines
 ```
 
+### Media Domain
+
+```mermaid
+erDiagram
+    MediaFile {
+        uuid id PK
+        uuid uploader_id FK
+        string media_type
+        string visibility
+        string processing_status
+        string scan_status
+        int version
+        boolean is_current
+        uuid version_group_id FK
+    }
+    MediaAsset {
+        uuid id PK
+        uuid media_file_id FK
+        string asset_type
+    }
+    MediaFileShare {
+        uuid id PK
+        uuid media_file_id FK
+        uuid shared_with_id FK
+        boolean can_download
+        datetime expires_at
+    }
+    Tag {
+        uuid id PK
+        string name
+        string tag_type
+        uuid owner_id FK
+    }
+    UploadSession {
+        uuid id PK
+        uuid uploader_id FK
+        string backend
+        string status
+    }
+
+    MediaFile ||--o{ MediaAsset : "has"
+    MediaFile ||--o{ MediaFileShare : "has"
+    MediaFile }o--o{ Tag : "tagged_with"
+    MediaFile ||--|| MediaFile : "version_group"
+```
+
 ---
 
 ## API Structure
@@ -315,6 +366,24 @@ All API routes are prefixed with `/api/v1/`.
 |----------|--------|-------------|
 | `/webhooks/stripe/` | POST | Stripe webhook receiver |
 
+### Media (`/api/v1/media/`)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/search/` | GET | Full-text search with filters |
+| `/quota/` | GET | Storage quota status |
+| `/upload/` | POST | Standard file upload |
+| `/files/{id}/` | GET | File metadata |
+| `/files/{id}/download/` | GET | Download file |
+| `/files/{id}/view/` | GET | View file inline |
+| `/files/{id}/shares/` | GET/POST | Manage file shares |
+| `/shared-with-me/` | GET | Files shared with user |
+| `/chunked/sessions/` | POST | Create upload session |
+| `/chunked/sessions/{id}/finalize/` | POST | Complete chunked upload |
+| `/tags/` | GET/POST | List/create tags |
+| `/files/{id}/tags/` | GET/POST/DELETE | Manage file tags |
+| `/files/by-tags/` | GET | Query files by tags |
+
 ### WebSocket Endpoints
 
 | Path | Description |
@@ -333,6 +402,7 @@ All API routes are prefixed with `/api/v1/`.
 | [`payments`](./app/payments/ARCHITECTURE.md) | 8+ | 1 | Stripe payments, escrow, subscriptions, ledger |
 | [`notifications`](./app/notifications/ARCHITECTURE.md) | 2 | 5 | Multi-channel notification delivery |
 | [`chat`](./app/chat/ARCHITECTURE.md) | 4 | 12+ | Real-time messaging, WebSocket |
+| [`media`](./app/media/ARCHITECTURE.md) | 6 | 25+ | File uploads, storage, sharing, search, tagging |
 
 ---
 
@@ -346,6 +416,7 @@ All API routes are prefixed with `/api/v1/`.
 | **Payments & Billing** | [payments](./app/payments/ARCHITECTURE.md) |
 | **Real-time Communication** | [chat](./app/chat/ARCHITECTURE.md) |
 | **User Notifications** | [notifications](./app/notifications/ARCHITECTURE.md) |
+| **File Management** | [media](./app/media/ARCHITECTURE.md) |
 | **Infrastructure** | [core](./app/core/ARCHITECTURE.md), [toolkit](./app/toolkit/ARCHITECTURE.md) |
 
 ### Key Entry Points

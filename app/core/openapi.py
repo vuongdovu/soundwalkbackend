@@ -4,6 +4,18 @@ OpenAPI schema customizations for drf-spectacular.
 This module provides hooks to customize the generated OpenAPI schema,
 including operation ID modifications and tag groupings for better
 documentation organization in ReDoc/Swagger UI.
+
+Tag naming follows the pattern: [App Name] - [Group Name]
+Examples:
+- Auth - User (user CRUD)
+- Auth - Profile (profile CRUD)
+- Media - Upload (file uploads)
+- Media - Files (file operations)
+- Media - Sharing (share management)
+- Media - Chunked Upload (resumable uploads)
+- Media - Tags (tagging system)
+- Media - Search (full-text search)
+- Media - Quota (storage quota)
 """
 
 # Natural language summaries for dj-rest-auth endpoints
@@ -71,12 +83,24 @@ DJ_REST_AUTH_SUMMARIES = {
 
 def group_auth_endpoints(result, generator, request, public):
     """
-    Postprocessing hook to group auth endpoints by function.
+    Postprocessing hook to group API endpoints by function.
 
-    Groups:
+    Groups endpoints following the [App Name] - [Group Name] pattern:
+
+    Auth groups:
         - Auth - User: user retrieve/update endpoints
         - Auth - Profile: profile retrieve/update endpoints
+        - Auth - Biometric: biometric authentication
         - Auth: authentication operations (login, logout, password, tokens)
+
+    Media groups (set via tags= in @extend_schema, this ensures consistency):
+        - Media - Upload: single file upload
+        - Media - Files: file details, download, view
+        - Media - Sharing: share management
+        - Media - Chunked Upload: resumable large file uploads
+        - Media - Tags: tagging system
+        - Media - Search: full-text search
+        - Media - Quota: storage quota status
 
     Also adds natural language summaries to dj-rest-auth endpoints.
     """
@@ -95,20 +119,65 @@ def group_auth_endpoints(result, generator, request, public):
                 operation["summary"] = summary
                 operation["description"] = description
 
-            # Group user endpoints
+            # Group auth endpoints (not media - those use tags= in views)
             if operation_id.startswith("auth_user_"):
                 operation["tags"] = ["Auth - User"]
 
-            # Group profile endpoints
             elif operation_id.startswith("auth_profile_"):
                 operation["tags"] = ["Auth - Profile"]
 
-            # Group biometric endpoints
             elif operation_id.startswith("auth_biometric_"):
                 operation["tags"] = ["Auth - Biometric"]
 
-            # All other auth endpoints stay under "Auth"
             elif operation_id.startswith("auth_"):
                 operation["tags"] = ["Auth"]
+
+    # Add tag descriptions for better documentation
+    result["tags"] = [
+        {
+            "name": "Auth",
+            "description": "Authentication operations including login, logout, password reset, and token management.",
+        },
+        {
+            "name": "Auth - User",
+            "description": "Current user retrieval and updates.",
+        },
+        {
+            "name": "Auth - Profile",
+            "description": "User profile management including personal details and preferences.",
+        },
+        {
+            "name": "Auth - Biometric",
+            "description": "Biometric authentication using device-native security (Face ID, Touch ID).",
+        },
+        {
+            "name": "Media - Upload",
+            "description": "Single file upload with MIME type validation, size limits, and quota checks.",
+        },
+        {
+            "name": "Media - Files",
+            "description": "File operations including metadata retrieval, download, and inline viewing.",
+        },
+        {
+            "name": "Media - Search",
+            "description": "Full-text search across media files using PostgreSQL with relevance ranking.",
+        },
+        {
+            "name": "Media - Sharing",
+            "description": "File sharing with other users including permission management and expiration.",
+        },
+        {
+            "name": "Media - Tags",
+            "description": "Tagging system for organizing and filtering media files.",
+        },
+        {
+            "name": "Media - Chunked Upload",
+            "description": "Resumable uploads for large files with S3 multipart support.",
+        },
+        {
+            "name": "Media - Quota",
+            "description": "Storage quota monitoring and management.",
+        },
+    ]
 
     return result

@@ -1461,3 +1461,212 @@ def cleanup_orphaned_s3_multipart_uploads() -> dict:
         "aborted_count": aborted_count,
         "errors": errors,
     }
+
+
+# =============================================================================
+# Search Vector Tasks
+# =============================================================================
+
+
+@shared_task
+def update_search_vector_safe(result: dict | str) -> dict:
+    """
+    Update search vector after processing completes.
+
+    This task is designed to be the final step in a Celery chain:
+    - NEVER raises exceptions (to not break the pipeline)
+    - Gracefully handles upstream failures
+    - Returns dict for chain continuation compatibility
+
+    The task includes extracted text content if available (for documents).
+
+    Args:
+        result: Either a dict from process_media_file chain
+               (with 'media_file_id' key) or a direct string UUID.
+
+    Returns:
+        Dict with status and media_file_id for chain continuation.
+    """
+    from media.models import MediaFile
+    from media.services.search import SearchVectorService
+
+    # Handle various input formats
+    media_file_id = None
+    upstream_status = None
+
+    try:
+        if isinstance(result, dict):
+            media_file_id = result.get("media_file_id")
+            upstream_status = result.get("status")
+        elif isinstance(result, str):
+            media_file_id = result
+        else:
+            logger.warning(
+                "Unexpected input type for search vector task",
+                extra={"input_type": type(result).__name__},
+            )
+            return {"status": "invalid_input", "media_file_id": None}
+
+        if not media_file_id:
+            logger.warning("No media_file_id in search vector task input")
+            return {"status": "no_file_id", "media_file_id": None}
+
+        # Skip if upstream failed (e.g., scan found malware)
+        if upstream_status in ("failed", "rejected", "infected"):
+            logger.info(
+                "Skipping search vector update due to upstream failure",
+                extra={
+                    "media_file_id": media_file_id,
+                    "upstream_status": upstream_status,
+                },
+            )
+            return {
+                "status": "skipped",
+                "media_file_id": media_file_id,
+                "reason": f"upstream_{upstream_status}",
+            }
+
+        # Load media file
+        try:
+            media_file = MediaFile.objects.get(id=media_file_id)
+        except MediaFile.DoesNotExist:
+            logger.warning(
+                "MediaFile not found for search vector update",
+                extra={"media_file_id": media_file_id},
+            )
+            return {"status": "not_found", "media_file_id": media_file_id}
+
+        # Determine if we should include content
+        include_content = media_file.media_type == MediaFile.MediaType.DOCUMENT
+
+        # Update vector (this method handles its own errors)
+        success = SearchVectorService.update_vector(
+            media_file,
+            include_content=include_content,
+        )
+
+        status = "updated" if success else "update_failed"
+        logger.info(
+            f"Search vector {status}",
+            extra={
+                "media_file_id": media_file_id,
+                "include_content": include_content,
+            },
+        )
+
+        return {
+            "status": status,
+            "media_file_id": media_file_id,
+        }
+
+    except Exception as e:
+        # Catch-all to ensure we never break the chain
+        logger.error(
+            "Unexpected error in search vector task",
+            extra={
+                "media_file_id": media_file_id,
+                "error": str(e),
+            },
+        )
+        return {
+            "status": "error",
+            "media_file_id": media_file_id,
+            "error": str(e),
+        }
+
+
+@shared_task
+def reconcile_search_vectors() -> dict:
+    """
+    Weekly task to recompute search vectors for documents with extracted text.
+
+    This reconciliation task ensures that:
+    1. Documents with extracted_text assets have up-to-date search vectors
+    2. Vectors include content that may have been added after initial upload
+    3. Any indexing issues are corrected over time
+
+    Should be scheduled via celery-beat (e.g., Sunday 3 AM).
+
+    Returns:
+        Dict with count of files updated and any errors.
+    """
+    from django.db.models import Exists, OuterRef
+
+    from media.models import MediaAsset, MediaFile
+    from media.services.search import SearchVectorService
+
+    logger.info("Starting search vector reconciliation")
+
+    updated_count = 0
+    error_count = 0
+    errors = []
+
+    try:
+        # Find documents with extracted text assets
+        has_extracted_text = Exists(
+            MediaAsset.objects.filter(
+                media_file=OuterRef("pk"),
+                asset_type=MediaAsset.AssetType.EXTRACTED_TEXT,
+            )
+        )
+
+        # Only process clean, current documents with extracted text
+        documents = MediaFile.objects.filter(
+            media_type=MediaFile.MediaType.DOCUMENT,
+            is_deleted=False,
+            is_current=True,
+            scan_status=MediaFile.ScanStatus.CLEAN,
+        ).filter(has_extracted_text)
+
+        total_count = documents.count()
+        logger.info(f"Found {total_count} documents with extracted text to reconcile")
+
+        for media_file in documents.iterator(chunk_size=100):
+            try:
+                success = SearchVectorService.update_vector(
+                    media_file,
+                    include_content=True,
+                )
+                if success:
+                    updated_count += 1
+                else:
+                    error_count += 1
+                    errors.append(f"Failed to update {media_file.id}")
+
+            except Exception as e:
+                error_count += 1
+                errors.append(f"Error updating {media_file.id}: {str(e)}")
+                logger.warning(
+                    "Error during search vector reconciliation",
+                    extra={
+                        "media_file_id": str(media_file.id),
+                        "error": str(e),
+                    },
+                )
+
+    except Exception as e:
+        logger.error(
+            "Search vector reconciliation failed",
+            extra={"error": str(e)},
+        )
+        return {
+            "status": "failed",
+            "error": str(e),
+            "updated_count": updated_count,
+            "error_count": error_count,
+        }
+
+    logger.info(
+        "Search vector reconciliation complete",
+        extra={
+            "updated_count": updated_count,
+            "error_count": error_count,
+        },
+    )
+
+    return {
+        "status": "completed",
+        "updated_count": updated_count,
+        "error_count": error_count,
+        "errors": errors[:10] if errors else [],  # First 10 errors
+    }

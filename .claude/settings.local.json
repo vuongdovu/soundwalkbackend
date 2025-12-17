@@ -167,7 +167,9 @@
       "Bash(claude mcp add:*)",
       "Bash(claude mcp:*)",
       "WebFetch(domain:docs.viewflow.io)",
-      "Bash(pip3 index:*)"
+      "Bash(pip3 index:*)",
+      "Bash(pre-commit uninstall:*)",
+      "Bash(uvx:*)"
     ],
     "deny": []
   },
@@ -183,5 +185,11 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "serena@claude-plugins-official": true
   }
 }

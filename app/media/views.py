@@ -12,7 +12,8 @@ Provides:
 
 from __future__ import annotations
 
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -27,6 +28,8 @@ from media.serializers import (
     ChunkedUploadProgressSerializer,
     ChunkedUploadSessionSerializer,
     ChunkTargetSerializer,
+    MediaFileSearchQuerySerializer,
+    MediaFileSearchResultSerializer,
     MediaFileSerializer,
     MediaFileShareCreateSerializer,
     MediaFileShareSerializer,
@@ -67,10 +70,12 @@ class MediaUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     @extend_schema(
+        operation_id="upload_media_file",
         summary="Upload media file",
         description=(
-            "Upload a new media file. Validates MIME type from content, "
-            "enforces size limits, and checks storage quota."
+            "Upload a new media file. Validates MIME type from content (magic bytes), "
+            "enforces per-media-type size limits, and checks user storage quota. "
+            "Triggers async malware scan and processing pipeline."
         ),
         request=MediaFileUploadSerializer,
         responses={
@@ -79,13 +84,13 @@ class MediaUploadView(APIView):
                 description="File uploaded successfully",
             ),
             400: OpenApiResponse(
-                description="Validation error",
+                description="Validation error (invalid MIME type, size exceeded, quota exceeded)",
             ),
             401: OpenApiResponse(
-                description="Not authenticated",
+                description="Authentication required",
             ),
         },
-        tags=["Media"],
+        tags=["Media - Upload"],
     )
     def post(self, request):
         """
@@ -140,17 +145,21 @@ class MediaFileDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="get_media_file",
         summary="Get media file details",
-        description="Get metadata for a media file. Requires at least VIEW access.",
+        description=(
+            "Retrieve metadata for a media file. Requires VIEW access or higher "
+            "(owner, shared recipient, or internal visibility for staff)."
+        ),
         responses={
             200: OpenApiResponse(
                 response=MediaFileSerializer,
-                description="File details",
+                description="File metadata",
             ),
-            403: OpenApiResponse(description="Access denied"),
+            403: OpenApiResponse(description="Access denied - no VIEW access"),
             404: OpenApiResponse(description="File not found"),
         },
-        tags=["Media"],
+        tags=["Media - Files"],
     )
     def get(self, request, file_id):
         """Get media file details."""
@@ -191,14 +200,20 @@ class MediaFileDownloadView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="download_media_file",
         summary="Download media file",
-        description="Download a media file. Requires DOWNLOAD access.",
+        description=(
+            "Download a media file with Content-Disposition: attachment header. "
+            "Requires DOWNLOAD access (owner or share with can_download=true)."
+        ),
         responses={
-            200: OpenApiResponse(description="File content"),
-            403: OpenApiResponse(description="Access denied"),
-            404: OpenApiResponse(description="File not found"),
+            200: OpenApiResponse(
+                description="Binary file content with attachment header"
+            ),
+            403: OpenApiResponse(description="Access denied - no DOWNLOAD permission"),
+            404: OpenApiResponse(description="File not found or not on storage"),
         },
-        tags=["Media"],
+        tags=["Media - Files"],
     )
     def get(self, request, file_id):
         """Download a media file."""
@@ -247,14 +262,21 @@ class MediaFileViewView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="view_media_file",
         summary="View media file inline",
-        description="View a media file in browser. Requires VIEW access.",
+        description=(
+            "View a media file inline in browser (Content-Disposition: inline). "
+            "Useful for images, PDFs, and videos that can be rendered in browser. "
+            "Requires VIEW access (owner, shared recipient, or internal for staff)."
+        ),
         responses={
-            200: OpenApiResponse(description="File content (inline)"),
-            403: OpenApiResponse(description="Access denied"),
-            404: OpenApiResponse(description="File not found"),
+            200: OpenApiResponse(
+                description="Binary file content with inline disposition"
+            ),
+            403: OpenApiResponse(description="Access denied - no VIEW access"),
+            404: OpenApiResponse(description="File not found or not on storage"),
         },
-        tags=["Media"],
+        tags=["Media - Files"],
     )
     def get(self, request, file_id):
         """View a media file inline."""
@@ -305,17 +327,21 @@ class MediaFileShareView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="list_file_shares",
         summary="List file shares",
-        description="List all active shares for a file. Owner only.",
+        description=(
+            "List all active shares for a media file. Only the file owner "
+            "can view the list of users the file is shared with."
+        ),
         responses={
             200: OpenApiResponse(
                 response=MediaFileShareSerializer(many=True),
-                description="List of shares",
+                description="List of active shares with recipient and permission details",
             ),
-            403: OpenApiResponse(description="Not the file owner"),
+            403: OpenApiResponse(description="Only the file owner can view shares"),
             404: OpenApiResponse(description="File not found"),
         },
-        tags=["Media Sharing"],
+        tags=["Media - Sharing"],
     )
     def get(self, request, file_id):
         """List all shares for a file."""
@@ -340,19 +366,25 @@ class MediaFileShareView(APIView):
         return Response(serializer.data)
 
     @extend_schema(
-        summary="Create file share",
-        description="Share a file with another user. Owner only.",
+        operation_id="create_file_share",
+        summary="Share file with user",
+        description=(
+            "Share a media file with another user. Only the file owner can create shares. "
+            "Optionally set download permission, expiration, and include a message."
+        ),
         request=MediaFileShareCreateSerializer,
         responses={
             201: OpenApiResponse(
                 response=MediaFileShareSerializer,
-                description="Share created",
+                description="Share created successfully",
             ),
-            400: OpenApiResponse(description="Validation error"),
-            403: OpenApiResponse(description="Not the file owner"),
+            400: OpenApiResponse(
+                description="Invalid recipient user or share parameters"
+            ),
+            403: OpenApiResponse(description="Only the file owner can create shares"),
             404: OpenApiResponse(description="File not found"),
         },
-        tags=["Media Sharing"],
+        tags=["Media - Sharing"],
     )
     def post(self, request, file_id):
         """Create a new share for a file."""
@@ -399,14 +431,18 @@ class MediaFileShareDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="revoke_file_share",
         summary="Revoke file share",
-        description="Revoke a user's access to a file. Owner only.",
+        description=(
+            "Revoke a user's access to a shared file. Only the file owner "
+            "can revoke shares. The recipient will immediately lose access."
+        ),
         responses={
-            204: OpenApiResponse(description="Share revoked"),
-            403: OpenApiResponse(description="Not the file owner"),
+            204: OpenApiResponse(description="Share revoked successfully"),
+            403: OpenApiResponse(description="Only the file owner can revoke shares"),
             404: OpenApiResponse(description="File or share not found"),
         },
-        tags=["Media Sharing"],
+        tags=["Media - Sharing"],
     )
     def delete(self, request, file_id, user_id):
         """Revoke a share."""
@@ -462,15 +498,19 @@ class MediaFilesSharedWithMeView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="list_files_shared_with_me",
         summary="List files shared with me",
-        description="Get all files that have been shared with the current user.",
+        description=(
+            "Get all media files that other users have shared with the current user. "
+            "Includes files with active (non-expired) shares only."
+        ),
         responses={
             200: OpenApiResponse(
                 response=MediaFileSerializer(many=True),
-                description="List of shared files",
+                description="List of files shared with the current user",
             ),
         },
-        tags=["Media Sharing"],
+        tags=["Media - Sharing"],
     )
     def get(self, request):
         """List files shared with the current user."""
@@ -512,22 +552,23 @@ class ChunkedUploadSessionView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="create_chunked_upload_session",
         summary="Create chunked upload session",
         description=(
-            "Initialize a new chunked upload session. Returns session ID, "
-            "chunk size, and total parts needed. Client uploads chunks to the "
-            "provided targets."
+            "Initialize a new resumable upload session for large files. Returns session ID, "
+            "chunk size, total parts needed, and backend type (local or S3). "
+            "Session expires after 24 hours if not finalized."
         ),
         request=ChunkedUploadInitSerializer,
         responses={
             201: OpenApiResponse(
                 response=ChunkedUploadSessionSerializer,
-                description="Session created successfully",
+                description="Session created with upload instructions",
             ),
-            400: OpenApiResponse(description="Validation error or quota exceeded"),
-            401: OpenApiResponse(description="Not authenticated"),
+            400: OpenApiResponse(description="Invalid file metadata or quota exceeded"),
+            401: OpenApiResponse(description="Authentication required"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def post(self, request):
         """Create a new chunked upload session."""
@@ -586,16 +627,20 @@ class ChunkedUploadSessionDetailView(APIView):
             return None
 
     @extend_schema(
+        operation_id="get_chunked_upload_session",
         summary="Get upload session status",
-        description="Get the current status and progress of an upload session.",
+        description=(
+            "Get the current status and progress of an upload session. "
+            "Includes bytes received, parts completed, and expiration time."
+        ),
         responses={
             200: OpenApiResponse(
                 response=ChunkedUploadSessionSerializer,
-                description="Session status",
+                description="Session status and progress details",
             ),
-            404: OpenApiResponse(description="Session not found"),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def get(self, request, session_id):
         """Get session status."""
@@ -610,14 +655,20 @@ class ChunkedUploadSessionDetailView(APIView):
         return Response(serializer.data)
 
     @extend_schema(
+        operation_id="abort_chunked_upload_session",
         summary="Abort upload session",
-        description="Abort an in-progress upload and clean up resources.",
+        description=(
+            "Abort an in-progress upload and clean up resources. "
+            "Deletes uploaded chunks (local) or aborts S3 multipart upload."
+        ),
         responses={
-            204: OpenApiResponse(description="Session aborted"),
-            404: OpenApiResponse(description="Session not found"),
-            409: OpenApiResponse(description="Session already completed"),
+            204: OpenApiResponse(
+                description="Session aborted and resources cleaned up"
+            ),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
+            409: OpenApiResponse(description="Session already completed or finalized"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def delete(self, request, session_id):
         """Abort the upload session."""
@@ -658,21 +709,23 @@ class ChunkedUploadPartTargetView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="get_chunk_upload_target",
         summary="Get chunk upload target",
         description=(
-            "Get the upload target for a specific chunk. For local storage, "
-            "returns our server endpoint. For S3, returns a presigned URL."
+            "Get the upload target for a specific chunk part. For local storage, "
+            "returns our server endpoint (PUT). For S3, returns a presigned URL "
+            "for direct upload. Part numbers start at 1."
         ),
         responses={
             200: OpenApiResponse(
                 response=ChunkTargetSerializer,
-                description="Upload target information",
+                description="Upload URL, method, and headers for this chunk",
             ),
-            400: OpenApiResponse(description="Invalid part number"),
-            404: OpenApiResponse(description="Session not found"),
-            410: OpenApiResponse(description="Session expired"),
+            400: OpenApiResponse(description="Invalid part number (out of range)"),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
+            410: OpenApiResponse(description="Session has expired"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def get(self, request, session_id, part_number):
         """Get upload target for a chunk."""
@@ -720,18 +773,23 @@ class ChunkedUploadPartView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="upload_chunk",
         summary="Upload chunk",
-        description="Upload a chunk to the server (local storage only).",
+        description=(
+            "Upload raw binary chunk data to the server. Only used for local storage backend. "
+            "For S3 backend, upload directly to the presigned URL from get_chunk_upload_target."
+        ),
+        request={"application/octet-stream": {"type": "string", "format": "binary"}},
         responses={
             200: OpenApiResponse(
                 response=PartCompletionResultSerializer,
-                description="Chunk uploaded, progress updated",
+                description="Chunk uploaded with updated progress",
             ),
-            400: OpenApiResponse(description="Invalid chunk"),
-            404: OpenApiResponse(description="Session not found"),
-            409: OpenApiResponse(description="Invalid session status"),
+            400: OpenApiResponse(description="Empty chunk data or invalid chunk size"),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
+            409: OpenApiResponse(description="Session not in IN_PROGRESS status"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def put(self, request, session_id, part_number):
         """Upload a chunk."""
@@ -788,17 +846,38 @@ class ChunkedUploadPartCompleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        summary="Record part completion",
-        description="Record that a part was uploaded to S3 (S3 storage only).",
+        operation_id="record_chunk_completion",
+        summary="Record chunk completion",
+        description=(
+            "Record that a chunk was uploaded directly to S3. Only used for S3 storage backend. "
+            "Call this after successfully uploading to the presigned URL from get_chunk_upload_target. "
+            "Include the ETag from S3's response headers."
+        ),
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "etag": {
+                        "type": "string",
+                        "description": "ETag from S3 response headers",
+                    },
+                    "part_size": {
+                        "type": "integer",
+                        "description": "Size of the uploaded part in bytes",
+                    },
+                },
+                "required": ["etag", "part_size"],
+            }
+        },
         responses={
             200: OpenApiResponse(
                 response=PartCompletionResultSerializer,
-                description="Part recorded, progress updated",
+                description="Part recorded with updated progress",
             ),
-            400: OpenApiResponse(description="Invalid data"),
-            404: OpenApiResponse(description="Session not found"),
+            400: OpenApiResponse(description="Missing or invalid ETag/part_size"),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def post(self, request, session_id, part_number):
         """Record part completion."""
@@ -860,20 +939,23 @@ class ChunkedUploadFinalizeView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        summary="Finalize upload",
+        operation_id="finalize_chunked_upload",
+        summary="Finalize chunked upload",
         description=(
-            "Complete the upload and create the MediaFile. "
-            "Assembles chunks, updates quota, triggers processing."
+            "Complete the upload and create the MediaFile. Verifies all parts are present, "
+            "assembles chunks (local) or completes multipart upload (S3), creates MediaFile, "
+            "updates storage quota, and triggers malware scan + processing pipeline."
         ),
+        request=None,
         responses={
             201: OpenApiResponse(
                 response=ChunkedUploadFinalizeResultSerializer,
-                description="Upload complete, MediaFile created",
+                description="Upload complete, MediaFile created and processing started",
             ),
-            400: OpenApiResponse(description="Missing parts or invalid state"),
-            404: OpenApiResponse(description="Session not found"),
+            400: OpenApiResponse(description="Missing parts or checksum mismatch"),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def post(self, request, session_id):
         """Finalize the upload."""
@@ -922,16 +1004,20 @@ class ChunkedUploadProgressView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
+        operation_id="get_chunked_upload_progress",
         summary="Get upload progress",
-        description="Get detailed progress information for an upload session.",
+        description=(
+            "Get detailed progress information for an upload session. "
+            "Includes percentage complete, parts uploaded, and bytes received."
+        ),
         responses={
             200: OpenApiResponse(
                 response=ChunkedUploadProgressSerializer,
-                description="Progress information",
+                description="Detailed progress metrics",
             ),
-            404: OpenApiResponse(description="Session not found"),
+            404: OpenApiResponse(description="Session not found or not owned by user"),
         },
-        tags=["Chunked Upload"],
+        tags=["Media - Chunked Upload"],
     )
     def get(self, request, session_id):
         """Get progress information."""
@@ -979,15 +1065,18 @@ class QuotaStatusView(APIView):
     @extend_schema(
         operation_id="get_quota_status",
         summary="Get storage quota status",
-        description="Returns the current user's storage quota status including "
-        "used space, remaining space, and upload availability.",
+        description=(
+            "Returns the current user's storage quota status including used space, "
+            "remaining space, percentage used, and whether uploads are allowed. "
+            "Useful for showing storage indicators in the UI."
+        ),
         responses={
             200: OpenApiResponse(
                 response=QuotaStatusSerializer,
-                description="Quota status information",
+                description="Storage quota metrics in bytes and megabytes",
             ),
         },
-        tags=["Media"],
+        tags=["Media - Quota"],
     )
     def get(self, request):
         """Get storage quota status for the current user."""
@@ -1030,15 +1119,19 @@ class TagListCreateView(APIView):
 
     @extend_schema(
         operation_id="list_tags",
-        summary="List tags",
-        description="List user's tags and accessible system/auto tags.",
+        summary="List all tags",
+        description=(
+            "List all tags accessible to the current user. Includes user-created tags, "
+            "system tags (created by admins), and auto-generated tags (from AI classification). "
+            "Ordered alphabetically by name."
+        ),
         responses={
             200: OpenApiResponse(
                 response=TagSerializer(many=True),
-                description="List of tags",
+                description="List of tags with type, category, and color",
             ),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def get(self, request):
         """List tags accessible to the user."""
@@ -1054,17 +1147,21 @@ class TagListCreateView(APIView):
 
     @extend_schema(
         operation_id="create_tag",
-        summary="Create tag",
-        description="Create a new user tag.",
+        summary="Create user tag",
+        description=(
+            "Create a new user tag for organizing files. Optionally specify a "
+            "category for grouping and a color for visual distinction. "
+            "Tag names must be unique per user."
+        ),
         request=TagCreateSerializer,
         responses={
             201: OpenApiResponse(
                 response=TagSerializer,
-                description="Tag created",
+                description="Tag created successfully",
             ),
-            400: OpenApiResponse(description="Validation error"),
+            400: OpenApiResponse(description="Invalid name or tag already exists"),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def post(self, request):
         """Create a new user tag."""
@@ -1114,16 +1211,19 @@ class TagDetailView(APIView):
 
     @extend_schema(
         operation_id="get_tag",
-        summary="Get tag",
-        description="Get tag details.",
+        summary="Get tag details",
+        description=(
+            "Get details for a specific tag by ID. Returns tag metadata including "
+            "type (user/system/auto), category, color, and slug."
+        ),
         responses={
             200: OpenApiResponse(
                 response=TagSerializer,
-                description="Tag details",
+                description="Tag details and metadata",
             ),
-            404: OpenApiResponse(description="Tag not found"),
+            404: OpenApiResponse(description="Tag not found or not accessible"),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def get(self, request, tag_id):
         """Get tag details."""
@@ -1139,14 +1239,20 @@ class TagDetailView(APIView):
 
     @extend_schema(
         operation_id="delete_tag",
-        summary="Delete tag",
-        description="Delete a user tag. System tags cannot be deleted.",
+        summary="Delete user tag",
+        description=(
+            "Delete a user-created tag. Only user tags can be deleted; system and "
+            "auto-generated tags are managed by the platform. Deleting a tag removes "
+            "it from all files it was applied to."
+        ),
         responses={
-            204: OpenApiResponse(description="Tag deleted"),
-            403: OpenApiResponse(description="Cannot delete system/auto tags"),
-            404: OpenApiResponse(description="Tag not found"),
+            204: OpenApiResponse(description="Tag deleted successfully"),
+            403: OpenApiResponse(
+                description="Cannot delete system or auto-generated tags"
+            ),
+            404: OpenApiResponse(description="Tag not found or not accessible"),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def delete(self, request, tag_id):
         """Delete a user tag."""
@@ -1198,16 +1304,20 @@ class MediaFileTagsView(APIView):
     @extend_schema(
         operation_id="list_file_tags",
         summary="List file tags",
-        description="List tags applied to a media file.",
+        description=(
+            "List all tags applied to a media file. Includes tag metadata, "
+            "who applied each tag, and confidence score for auto-generated tags. "
+            "Requires VIEW access to the file."
+        ),
         responses={
             200: OpenApiResponse(
                 response=MediaFileTagSerializer(many=True),
-                description="List of tags",
+                description="List of tags with application metadata",
             ),
-            403: OpenApiResponse(description="Access denied"),
+            403: OpenApiResponse(description="No VIEW access to this file"),
             404: OpenApiResponse(description="File not found"),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def get(self, request, file_id):
         """List tags applied to the file."""
@@ -1232,20 +1342,30 @@ class MediaFileTagsView(APIView):
         return Response(serializer.data)
 
     @extend_schema(
-        operation_id="apply_tag",
+        operation_id="apply_tag_to_file",
         summary="Apply tag to file",
-        description="Apply a tag to a media file. Creates user tag if needed.",
+        description=(
+            "Apply a tag to a media file. Provide either tag_id for an existing tag, "
+            "or tag_name to create/use a user tag. If the tag is already applied, "
+            "returns the existing association. Requires EDIT access to the file."
+        ),
         request=ApplyTagSerializer,
         responses={
             201: OpenApiResponse(
                 response=MediaFileTagSerializer,
-                description="Tag applied",
+                description="Tag applied successfully (new)",
             ),
-            400: OpenApiResponse(description="Validation error"),
-            403: OpenApiResponse(description="Access denied"),
-            404: OpenApiResponse(description="File not found"),
+            200: OpenApiResponse(
+                response=MediaFileTagSerializer,
+                description="Tag was already applied (existing)",
+            ),
+            400: OpenApiResponse(
+                description="Invalid tag_id/tag_name or neither provided"
+            ),
+            403: OpenApiResponse(description="No EDIT access to this file"),
+            404: OpenApiResponse(description="File or tag not found"),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def post(self, request, file_id):
         """Apply a tag to the file."""
@@ -1308,15 +1428,18 @@ class MediaFileTagDeleteView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        operation_id="remove_file_tag",
+        operation_id="remove_tag_from_file",
         summary="Remove tag from file",
-        description="Remove a tag from a media file.",
+        description=(
+            "Remove a tag from a media file. Requires EDIT access to the file. "
+            "Returns 404 if the tag was not applied to this file."
+        ),
         responses={
-            204: OpenApiResponse(description="Tag removed"),
-            403: OpenApiResponse(description="Access denied"),
-            404: OpenApiResponse(description="File or tag not found"),
+            204: OpenApiResponse(description="Tag removed successfully"),
+            403: OpenApiResponse(description="No EDIT access to this file"),
+            404: OpenApiResponse(description="File, tag, or tag association not found"),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def delete(self, request, file_id, tag_id):
         """Remove a tag from the file."""
@@ -1372,33 +1495,41 @@ class FilesByTagView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        operation_id="files_by_tags",
-        summary="Get files by tags",
-        description="Query files matching specified tags.",
+        operation_id="list_files_by_tags",
+        summary="Query files by tags",
+        description=(
+            "Query accessible files that have the specified tags. Use mode='and' to require "
+            "all tags (intersection) or mode='or' to match any tag (union). "
+            "Only returns files the user has access to (owned, shared, or internal for staff)."
+        ),
         parameters=[
-            {
-                "name": "tags",
-                "in": "query",
-                "required": True,
-                "description": "Comma-separated list of tag IDs",
-                "schema": {"type": "string"},
-            },
-            {
-                "name": "mode",
-                "in": "query",
-                "required": False,
-                "description": "Match mode: 'and' or 'or' (default: 'and')",
-                "schema": {"type": "string", "enum": ["and", "or"]},
-            },
+            OpenApiParameter(
+                name="tags",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Comma-separated list of tag UUIDs",
+                required=True,
+            ),
+            OpenApiParameter(
+                name="mode",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Match mode: 'and' (all tags required) or 'or' (any tag matches)",
+                enum=["and", "or"],
+                default="and",
+                required=False,
+            ),
         ],
         responses={
             200: OpenApiResponse(
                 response=MediaFileSerializer(many=True),
-                description="List of matching files",
+                description="List of files matching the tag filter",
             ),
-            400: OpenApiResponse(description="Invalid parameters"),
+            400: OpenApiResponse(
+                description="Missing tags parameter or invalid tag IDs/mode"
+            ),
         },
-        tags=["Tags"],
+        tags=["Media - Tags"],
     )
     def get(self, request):
         """Get files matching specified tags."""
@@ -1456,3 +1587,176 @@ class FilesByTagView(APIView):
             context={"request": request},
         )
         return Response(serializer.data)
+
+
+class MediaFileSearchView(APIView):
+    """
+    Search media files with full-text search and filters.
+
+    GET /api/v1/media/search/
+        Search files with optional text query and filters.
+
+    Query Parameters:
+        q: Search query (PostgreSQL websearch syntax)
+        media_type: Filter by media type (image, video, document, audio, other)
+        uploaded_after: Filter by upload date (YYYY-MM-DD, inclusive)
+        uploaded_before: Filter by upload date (YYYY-MM-DD, inclusive)
+        tags: Comma-separated tag slugs (all must match)
+        uploader: Filter by uploader UUID
+        page: Page number (default: 1)
+        page_size: Results per page (default: 20, max: 100)
+
+    Search Behavior:
+        - Without query: Browse mode, files ordered by -created_at
+        - With query: Full-text search with relevance ranking
+
+    Access Control:
+        Users only see files they:
+        - Own
+        - Have active (non-expired) shares for
+        - Can view as staff (internal visibility)
+
+    Excluded:
+        - Soft-deleted files
+        - Infected files (scan_status='infected')
+        - Non-current versions
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="search_media_files",
+        summary="Search media files",
+        description=(
+            "Search accessible media files with PostgreSQL full-text search. "
+            "Without a query, returns files in browse mode ordered by created_at. "
+            "With a query, returns results ranked by relevance (filename > tags > content). "
+            "Results are paginated and exclude soft-deleted, infected, and non-current files."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="q",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Search query using PostgreSQL websearch syntax (supports AND, OR, NOT, phrases)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="media_type",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Filter by media type",
+                enum=["image", "video", "document", "audio", "other"],
+                required=False,
+            ),
+            OpenApiParameter(
+                name="uploaded_after",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description="Filter files uploaded on or after this date (YYYY-MM-DD)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="uploaded_before",
+                type=OpenApiTypes.DATE,
+                location=OpenApiParameter.QUERY,
+                description="Filter files uploaded on or before this date (YYYY-MM-DD)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="tags",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Comma-separated tag slugs (all must match)",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="uploader",
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description="Filter by uploader UUID",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="page",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Page number (default: 1)",
+                required=False,
+                default=1,
+            ),
+            OpenApiParameter(
+                name="page_size",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Results per page (default: 20, max: 100)",
+                required=False,
+                default=20,
+            ),
+        ],
+        responses={
+            200: MediaFileSearchResultSerializer(many=True),
+        },
+        tags=["Media - Search"],
+    )
+    def get(self, request) -> Response:
+        """Handle search request."""
+        from rest_framework.pagination import PageNumberPagination
+
+        from media.services.search import SearchQueryBuilder
+
+        # Validate query parameters
+        query_serializer = MediaFileSearchQuerySerializer(data=request.query_params)
+        query_serializer.is_valid(raise_exception=True)
+        params = query_serializer.validated_data
+
+        # Build filters dict
+        filters = {}
+        if media_type := params.get("media_type"):
+            filters["media_type"] = media_type
+        if uploaded_after := params.get("uploaded_after"):
+            filters["uploaded_after"] = uploaded_after
+        if uploaded_before := params.get("uploaded_before"):
+            filters["uploaded_before"] = uploaded_before
+        if tags := params.get("tags"):
+            filters["tags"] = tags
+        if uploader := params.get("uploader"):
+            filters["uploader"] = uploader
+
+        # Execute search
+        queryset = SearchQueryBuilder.search(
+            user=request.user,
+            query=params.get("q"),
+            filters=filters if filters else None,
+        )
+
+        # Prefetch related for efficiency
+        queryset = queryset.select_related("uploader").prefetch_related(
+            "file_tags__tag",
+            "assets",
+        )
+
+        # Paginate
+        paginator = PageNumberPagination()
+        paginator.page_size = min(
+            int(request.query_params.get("page_size", 20)),
+            100,  # Max page size
+        )
+        page = paginator.paginate_queryset(queryset, request)
+
+        # Check if we're in browse mode (no query) to set relevance_score to None
+        is_browse_mode = not params.get("q", "").strip()
+
+        # Serialize results
+        serializer = MediaFileSearchResultSerializer(
+            page,
+            many=True,
+            context={"request": request},
+        )
+
+        # If browse mode, set relevance_score to None
+        if is_browse_mode:
+            for item in serializer.data:
+                item["relevance_score"] = None
+
+        return paginator.get_paginated_response(serializer.data)

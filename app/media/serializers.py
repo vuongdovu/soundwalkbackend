@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from drf_spectacular.utils import OpenApiExample, extend_schema_serializer
 from rest_framework import serializers
 
 from authentication.models import User
@@ -138,22 +139,74 @@ class MediaFileUploadSerializer(serializers.Serializer):
         if hasattr(user, "profile"):
             user.profile.add_storage_usage(media_file.file_size)
 
-        # Trigger async scan -> process chain
+        # Compute initial search vector with filename only
+        from media.services.search import SearchVectorService
+
+        SearchVectorService.update_vector_filename_only(media_file)
+
+        # Trigger async scan -> process -> search vector chain
         # Import here to avoid circular imports
         from celery import chain
 
-        from media.tasks import process_media_file, scan_file_for_malware
+        from media.tasks import (
+            process_media_file,
+            scan_file_for_malware,
+            update_search_vector_safe,
+        )
 
-        # Chain: scan first, then process if not infected
+        # Chain: scan first, then process, then update search vector with content
         task_chain = chain(
             scan_file_for_malware.s(str(media_file.id)),
             process_media_file.s(),
+            update_search_vector_safe.s(),
         )
         task_chain.delay()
 
         return media_file
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Image file",
+            value={
+                "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "original_filename": "vacation_photo.jpg",
+                "media_type": "image",
+                "mime_type": "image/jpeg",
+                "file_size": 2457600,
+                "visibility": "private",
+                "file_url": "https://api.example.com/api/v1/media/files/a1b2c3d4-e5f6-7890-abcd-ef1234567890/download/",
+                "processing_status": "ready",
+                "scan_status": "clean",
+                "version": 1,
+                "is_current": True,
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:31:00Z",
+            },
+            response_only=True,
+        ),
+        OpenApiExample(
+            "Document file (processing)",
+            value={
+                "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+                "original_filename": "quarterly_report_2024.pdf",
+                "media_type": "document",
+                "mime_type": "application/pdf",
+                "file_size": 5242880,
+                "visibility": "shared",
+                "file_url": "https://api.example.com/api/v1/media/files/b2c3d4e5-f6a7-8901-bcde-f12345678901/download/",
+                "processing_status": "processing",
+                "scan_status": "clean",
+                "version": 1,
+                "is_current": True,
+                "created_at": "2024-01-15T14:00:00Z",
+                "updated_at": "2024-01-15T14:00:30Z",
+            },
+            response_only=True,
+        ),
+    ]
+)
 class MediaFileSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for MediaFile model.
@@ -249,6 +302,28 @@ class MediaFileShareSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Share with download permission",
+            value={
+                "shared_with": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+                "can_download": True,
+                "expires_in_days": 30,
+                "message": "Here are the project files you requested.",
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            "View-only share (no expiration)",
+            value={
+                "shared_with": "d4e5f6a7-b8c9-0123-def0-234567890123",
+                "can_download": False,
+            },
+            request_only=True,
+        ),
+    ]
+)
 class MediaFileShareCreateSerializer(serializers.Serializer):
     """
     Serializer for creating file shares.
@@ -323,6 +398,28 @@ class MediaFileShareCreateSerializer(serializers.Serializer):
 # =============================================================================
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Large video file",
+            value={
+                "filename": "company_presentation.mp4",
+                "file_size": 536870912,
+                "mime_type": "video/mp4",
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Large document",
+            value={
+                "filename": "annual_report_2024.pdf",
+                "file_size": 104857600,
+                "mime_type": "application/pdf",
+            },
+            request_only=True,
+        ),
+    ]
+)
 class ChunkedUploadInitSerializer(serializers.Serializer):
     """
     Serializer for initializing a chunked upload session.
@@ -330,9 +427,11 @@ class ChunkedUploadInitSerializer(serializers.Serializer):
     Validates the file metadata and returns session information.
     """
 
-    filename = serializers.CharField(max_length=255)
-    file_size = serializers.IntegerField(min_value=1)
-    mime_type = serializers.CharField(max_length=100)
+    filename = serializers.CharField(max_length=255, help_text="Original filename")
+    file_size = serializers.IntegerField(
+        min_value=1, help_text="Total file size in bytes"
+    )
+    mime_type = serializers.CharField(max_length=100, help_text="MIME type of the file")
 
     # Media type mapping from MIME type
     MIME_TO_MEDIA_TYPE = {
@@ -378,6 +477,30 @@ class ChunkedUploadPartCompleteSerializer(serializers.Serializer):
     part_size = serializers.IntegerField(min_value=1)
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Session in progress",
+            value={
+                "session_id": "e5f6a7b8-c9d0-1234-ef01-234567890abc",
+                "filename": "company_presentation.mp4",
+                "file_size": 536870912,
+                "mime_type": "video/mp4",
+                "media_type": "video",
+                "bytes_received": 157286400,
+                "parts_completed": 15,
+                "total_parts": 51,
+                "progress_percent": 29.4,
+                "chunk_size": 10485760,
+                "status": "in_progress",
+                "expires_at": "2024-01-16T10:30:00Z",
+                "is_complete": False,
+                "backend": "s3",
+            },
+            response_only=True,
+        ),
+    ]
+)
 class ChunkedUploadSessionSerializer(serializers.ModelSerializer):
     """
     Serializer for chunked upload session details.
@@ -416,6 +539,34 @@ class ChunkedUploadSessionSerializer(serializers.ModelSerializer):
         return obj.parts_completed_count
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "S3 presigned URL",
+            value={
+                "upload_url": "https://bucket.s3.amazonaws.com/uploads/pending/abc123?X-Amz-Signature=...",
+                "part_number": 1,
+                "method": "PUT",
+                "direct": True,
+                "expires_in": 3600,
+                "headers": {"Content-Type": "application/octet-stream"},
+            },
+            response_only=True,
+        ),
+        OpenApiExample(
+            "Local storage endpoint",
+            value={
+                "upload_url": "/api/v1/media/chunked/sessions/abc-123/parts/1/",
+                "part_number": 1,
+                "method": "PUT",
+                "direct": False,
+                "expires_in": None,
+                "headers": None,
+            },
+            response_only=True,
+        ),
+    ]
+)
 class ChunkTargetSerializer(serializers.Serializer):
     """
     Serializer for chunk upload target information.
@@ -423,18 +574,45 @@ class ChunkTargetSerializer(serializers.Serializer):
     Tells the client where and how to upload a specific chunk.
     """
 
-    upload_url = serializers.CharField()
-    part_number = serializers.IntegerField()
-    method = serializers.CharField()
-    direct = serializers.BooleanField()
-    expires_in = serializers.IntegerField(allow_null=True, required=False)
+    upload_url = serializers.CharField(help_text="URL to upload the chunk to")
+    part_number = serializers.IntegerField(help_text="Part number (1-indexed)")
+    method = serializers.CharField(help_text="HTTP method to use (PUT)")
+    direct = serializers.BooleanField(
+        help_text="True if uploading directly to storage (S3)"
+    )
+    expires_in = serializers.IntegerField(
+        allow_null=True, required=False, help_text="Seconds until presigned URL expires"
+    )
     headers = serializers.DictField(
         child=serializers.CharField(),
         allow_null=True,
         required=False,
+        help_text="Headers to include in the upload request",
     )
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Chunk uploaded (not complete)",
+            value={
+                "bytes_received": 31457280,
+                "parts_completed": 3,
+                "is_complete": False,
+            },
+            response_only=True,
+        ),
+        OpenApiExample(
+            "Final chunk uploaded",
+            value={
+                "bytes_received": 536870912,
+                "parts_completed": 51,
+                "is_complete": True,
+            },
+            response_only=True,
+        ),
+    ]
+)
 class PartCompletionResultSerializer(serializers.Serializer):
     """
     Serializer for part completion result.
@@ -442,9 +620,11 @@ class PartCompletionResultSerializer(serializers.Serializer):
     Returns progress information after a chunk is uploaded.
     """
 
-    bytes_received = serializers.IntegerField()
-    parts_completed = serializers.IntegerField()
-    is_complete = serializers.BooleanField()
+    bytes_received = serializers.IntegerField(help_text="Total bytes received so far")
+    parts_completed = serializers.IntegerField(help_text="Number of parts uploaded")
+    is_complete = serializers.BooleanField(
+        help_text="True if all parts have been uploaded"
+    )
 
 
 class ChunkedUploadProgressSerializer(serializers.Serializer):
@@ -480,6 +660,49 @@ class ChunkedUploadFinalizeResultSerializer(serializers.Serializer):
 # =============================================================================
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Plenty of storage available",
+            value={
+                "total_storage_bytes": 524288000,
+                "storage_quota_bytes": 5368709120,
+                "storage_remaining_bytes": 4844421120,
+                "storage_used_percent": 9.77,
+                "storage_used_mb": 500.0,
+                "storage_quota_mb": 5120.0,
+                "can_upload": True,
+            },
+            response_only=True,
+        ),
+        OpenApiExample(
+            "Approaching quota limit",
+            value={
+                "total_storage_bytes": 4831838208,
+                "storage_quota_bytes": 5368709120,
+                "storage_remaining_bytes": 536870912,
+                "storage_used_percent": 90.0,
+                "storage_used_mb": 4608.0,
+                "storage_quota_mb": 5120.0,
+                "can_upload": True,
+            },
+            response_only=True,
+        ),
+        OpenApiExample(
+            "Quota exceeded",
+            value={
+                "total_storage_bytes": 5905580032,
+                "storage_quota_bytes": 5368709120,
+                "storage_remaining_bytes": 0,
+                "storage_used_percent": 110.0,
+                "storage_used_mb": 5632.0,
+                "storage_quota_mb": 5120.0,
+                "can_upload": False,
+            },
+            response_only=True,
+        ),
+    ]
+)
 class QuotaStatusSerializer(serializers.Serializer):
     """
     Serializer for storage quota status response.
@@ -515,6 +738,42 @@ class QuotaStatusSerializer(serializers.Serializer):
 # =============================================================================
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "User tag",
+            value={
+                "id": "f6a7b8c9-d0e1-2345-f012-345678901234",
+                "name": "Receipts",
+                "slug": "receipts",
+                "tag_type": "user",
+                "category": "Finance",
+                "color": "#4CAF50",
+                "is_user_tag": True,
+                "is_system_tag": False,
+                "is_auto_tag": False,
+                "created_at": "2024-01-10T09:00:00Z",
+            },
+            response_only=True,
+        ),
+        OpenApiExample(
+            "Auto-generated tag",
+            value={
+                "id": "a7b8c9d0-e1f2-3456-0123-456789012345",
+                "name": "Invoice",
+                "slug": "invoice",
+                "tag_type": "auto",
+                "category": "Document Type",
+                "color": "#2196F3",
+                "is_user_tag": False,
+                "is_system_tag": False,
+                "is_auto_tag": True,
+                "created_at": "2024-01-01T00:00:00Z",
+            },
+            response_only=True,
+        ),
+    ]
+)
 class TagSerializer(serializers.ModelSerializer):
     """
     Read-only serializer for Tag model.
@@ -545,6 +804,26 @@ class TagSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Basic tag",
+            value={
+                "name": "Important",
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Tag with category and color",
+            value={
+                "name": "Tax Documents",
+                "category": "Finance",
+                "color": "#FF9800",
+            },
+            request_only=True,
+        ),
+    ]
+)
 class TagCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating user tags.
@@ -610,6 +889,24 @@ class MediaFileTagSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Apply by tag ID",
+            value={
+                "tag_id": "f6a7b8c9-d0e1-2345-f012-345678901234",
+            },
+            request_only=True,
+        ),
+        OpenApiExample(
+            "Apply by tag name (creates if needed)",
+            value={
+                "tag_name": "Project Alpha",
+            },
+            request_only=True,
+        ),
+    ]
+)
 class ApplyTagSerializer(serializers.Serializer):
     """
     Serializer for applying a tag to a file.
@@ -663,3 +960,135 @@ class FilesByTagsSerializer(serializers.Serializer):
         default="and",
         help_text="Match mode: 'and' requires all tags, 'or' requires any tag",
     )
+
+
+# =============================================================================
+# Search Serializers
+# =============================================================================
+
+
+class MediaFileSearchQuerySerializer(serializers.Serializer):
+    """
+    Serializer for validating search query parameters.
+
+    All parameters are optional - empty request returns browse mode
+    (files ordered by created_at).
+    """
+
+    q = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Search query (PostgreSQL websearch syntax)",
+    )
+    media_type = serializers.ChoiceField(
+        choices=MediaFile.MediaType.choices,
+        required=False,
+        help_text="Filter by media type",
+    )
+    uploaded_after = serializers.DateField(
+        required=False,
+        help_text="Filter by upload date (inclusive lower bound)",
+    )
+    uploaded_before = serializers.DateField(
+        required=False,
+        help_text="Filter by upload date (inclusive upper bound)",
+    )
+    tags = serializers.CharField(
+        required=False,
+        help_text="Comma-separated tag slugs (all must match)",
+    )
+    uploader = serializers.UUIDField(
+        required=False,
+        help_text="Filter by uploader UUID",
+    )
+
+    def validate_tags(self, value: str) -> list[str] | None:
+        """Parse comma-separated tags into a list."""
+        if not value:
+            return None
+        return [t.strip() for t in value.split(",") if t.strip()]
+
+
+class TagMinimalSerializer(serializers.ModelSerializer):
+    """Minimal tag serializer for search results."""
+
+    class Meta:
+        model = Tag
+        fields = ["slug", "name"]
+        read_only_fields = fields
+
+
+class UserMinimalSerializer(serializers.ModelSerializer):
+    """Minimal user serializer for search results."""
+
+    class Meta:
+        model = User
+        fields = ["id", "email"]
+        read_only_fields = fields
+
+
+class MediaFileSearchResultSerializer(serializers.ModelSerializer):
+    """
+    Serializer for search result items.
+
+    Includes:
+    - Basic file info
+    - Thumbnail URL (nullable)
+    - Relevance score (null in browse mode)
+    - Tags and uploader details
+    """
+
+    thumbnail_url = serializers.SerializerMethodField(
+        help_text="URL to thumbnail image (null if not available)",
+    )
+    relevance_score = serializers.FloatField(
+        read_only=True,
+        allow_null=True,
+        required=False,
+        help_text="Search relevance score (null in browse mode)",
+    )
+    tags = TagMinimalSerializer(
+        many=True,
+        read_only=True,
+        help_text="Tags applied to this file",
+    )
+    uploader = UserMinimalSerializer(
+        read_only=True,
+        help_text="User who uploaded the file",
+    )
+
+    class Meta:
+        model = MediaFile
+        fields = [
+            "id",
+            "original_filename",
+            "media_type",
+            "mime_type",
+            "file_size",
+            "visibility",
+            "processing_status",
+            "uploader",
+            "thumbnail_url",
+            "relevance_score",
+            "created_at",
+            "tags",
+        ]
+        read_only_fields = fields
+
+    def get_thumbnail_url(self, obj: MediaFile) -> str | None:
+        """
+        Get the thumbnail URL for the file.
+
+        Returns None if no thumbnail asset exists.
+        """
+        from media.models import MediaAsset
+
+        thumbnail = obj.assets.filter(asset_type=MediaAsset.AssetType.THUMBNAIL).first()
+
+        if thumbnail and thumbnail.file:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(thumbnail.file.url)
+            return thumbnail.file.url
+
+        return None

@@ -6,9 +6,6 @@ Handles chunked uploads using S3's multipart upload API:
 - Generates presigned URLs for direct client uploads
 - Tracks part completion for CompleteMultipartUpload
 - Cleans up with AbortMultipartUpload on abort/expiry
-
-Note: Requires boto3 to be installed. Import is done lazily to allow
-the module to be loaded even when boto3 is not installed (local dev).
 """
 
 from __future__ import annotations
@@ -17,6 +14,7 @@ import uuid
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+import boto3
 from celery import chain
 from django.core.files.storage import default_storage
 from django.db import transaction
@@ -72,8 +70,6 @@ class S3ChunkedUploadService(ChunkedUploadServiceBase):
     def s3_client(self):
         """Get or create S3 client."""
         if self._s3_client is None:
-            import boto3
-
             self._s3_client = boto3.client("s3")
         return self._s3_client
 

@@ -1,35 +1,47 @@
 """
 URL configuration for media app.
 
-Routes:
-    POST /upload/ - Upload a new media file
-    GET /files/{file_id}/ - Get file details
-    GET /files/{file_id}/download/ - Download file
-    GET /files/{file_id}/view/ - View file inline
-    GET /files/{file_id}/shares/ - List file shares
-    POST /files/{file_id}/shares/ - Create a share
-    DELETE /files/{file_id}/shares/{user_id}/ - Revoke a share
-    GET /shared-with-me/ - List files shared with current user
+API Documentation Groups (following [App Name] - [Group Name] pattern):
 
-Chunked Upload Routes:
-    POST /chunked/sessions/ - Create upload session
-    GET /chunked/sessions/{id}/ - Get session status
-    DELETE /chunked/sessions/{id}/ - Abort upload
-    GET /chunked/sessions/{id}/parts/{num}/target/ - Get chunk upload target
-    PUT /chunked/sessions/{id}/parts/{num}/ - Upload chunk (local)
-    POST /chunked/sessions/{id}/parts/{num}/complete/ - Record completion (S3)
-    POST /chunked/sessions/{id}/finalize/ - Complete upload
-    GET /chunked/sessions/{id}/progress/ - Get progress
+Media - Upload:
+    POST /upload/                                  - Upload media file
 
-Tag Routes:
-    GET /tags/ - List user's tags and accessible global tags
-    POST /tags/ - Create a new user tag
-    GET /tags/{tag_id}/ - Get tag details
-    DELETE /tags/{tag_id}/ - Delete a user tag
-    GET /files/{file_id}/tags/ - List tags applied to file
-    POST /files/{file_id}/tags/ - Apply tag to file
-    DELETE /files/{file_id}/tags/{tag_id}/ - Remove tag from file
-    GET /files/by-tags/ - Query files by tags
+Media - Files:
+    GET /files/{file_id}/                         - Get file details
+    GET /files/{file_id}/download/                - Download file
+    GET /files/{file_id}/view/                    - View file inline
+
+Media - Search:
+    GET /search/                                  - Search files with full-text search
+
+Media - Sharing:
+    GET /files/{file_id}/shares/                  - List file shares
+    POST /files/{file_id}/shares/                 - Share file with user
+    DELETE /files/{file_id}/shares/{user_id}/     - Revoke share
+    GET /shared-with-me/                          - List files shared with me
+
+Media - Tags:
+    GET /tags/                                    - List all tags
+    POST /tags/                                   - Create user tag
+    GET /tags/{tag_id}/                           - Get tag details
+    DELETE /tags/{tag_id}/                        - Delete user tag
+    GET /files/{file_id}/tags/                    - List file tags
+    POST /files/{file_id}/tags/                   - Apply tag to file
+    DELETE /files/{file_id}/tags/{tag_id}/        - Remove tag from file
+    GET /files/by-tags/                           - Query files by tags
+
+Media - Chunked Upload:
+    POST /chunked/sessions/                       - Create upload session
+    GET /chunked/sessions/{id}/                   - Get session status
+    DELETE /chunked/sessions/{id}/                - Abort session
+    GET /chunked/sessions/{id}/parts/{num}/target/- Get chunk upload target
+    PUT /chunked/sessions/{id}/parts/{num}/       - Upload chunk (local)
+    POST /chunked/sessions/{id}/parts/{num}/complete/ - Record chunk completion (S3)
+    POST /chunked/sessions/{id}/finalize/         - Finalize upload
+    GET /chunked/sessions/{id}/progress/          - Get progress
+
+Media - Quota:
+    GET /quota/                                   - Get storage quota status
 """
 
 from django.urls import path
@@ -45,6 +57,7 @@ from media.views import (
     FilesByTagView,
     MediaFileDetailView,
     MediaFileDownloadView,
+    MediaFileSearchView,
     MediaFileShareDeleteView,
     MediaFileShareView,
     MediaFilesSharedWithMeView,
@@ -60,6 +73,8 @@ from media.views import (
 app_name = "media"
 
 urlpatterns = [
+    # Search
+    path("search/", MediaFileSearchView.as_view(), name="media-search"),
     # Quota Status
     path("quota/", QuotaStatusView.as_view(), name="quota-status"),
     # Upload

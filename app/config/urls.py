@@ -34,6 +34,25 @@ URL Structure:
         conversations/{id}/messages/{pk}/ - Message delete
     /api/v1/payments/              - Payment endpoints
         webhooks/stripe/           - Stripe webhook endpoint (POST)
+    /api/v1/media/                 - Media endpoints
+        upload/                    - Upload media file
+        files/{id}/                - Get file details
+        files/{id}/download/       - Download file
+        files/{id}/view/           - View file inline
+        files/{id}/shares/         - List/create file shares
+        files/{id}/shares/{user}/ - Revoke file share
+        files/{id}/tags/           - List/apply file tags
+        files/{id}/tags/{tag}/     - Remove tag from file
+        shared-with-me/            - List files shared with current user
+        search/                    - Full-text search with filters
+        quota/                     - Get storage quota status
+        tags/                      - List/create user tags
+        tags/{id}/                 - Get/delete user tag
+        files/by-tags/             - Query files by tags
+        chunked/sessions/          - Create chunked upload session
+        chunked/sessions/{id}/     - Get/abort upload session
+        chunked/sessions/{id}/parts/{num}/  - Upload chunk
+        chunked/sessions/{id}/finalize/     - Finalize upload
 
 For more information, see:
 https://docs.djangoproject.com/en/5.2/topics/http/urls/
