@@ -223,7 +223,7 @@ services:
   # ---------------------------------------------------------------------------
   # Malware scanning for uploaded files via clamd daemon
   clamav:
-    image: clamav/clamav:1.2
+    image: clamav/clamav:1.4
     container_name: app-clamav
     restart: unless-stopped
     volumes:
@@ -240,8 +240,9 @@ services:
         reservations:
           memory: 512M
     healthcheck:
-      # clamdscan --ping checks if the daemon is ready to accept scans
-      test: ["CMD", "clamdscan", "--ping"]
+      # clamdscan --ping 1 checks if the daemon is ready to accept scans
+      # The "1" argument is required in ClamAV 1.4+ (ping once)
+      test: ["CMD", "clamdscan", "--ping", "1"]
       interval: 30s
       timeout: 10s
       retries: 3

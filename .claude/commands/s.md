@@ -4,26 +4,25 @@ argument-hint: [task-description]
 description: Perform deep sequential thinking and analysis before implementation
 ---
 
-Use the sequential thinking tool to thoroughly analyze and solve the following task: $ARGUMENTS
+Use the sequential thinking tool to analyze this task: $ARGUMENTS
 
 ## Sequential Thinking Requirements:
 
-1. **Fully understand the problem space** - Break down the problem into its fundamental components and identify all stakeholders, constraints, and requirements.
+1. **Understand the problem** - Break down the problem into its fundamental components. Identify what is actually needed vs. what might be over-engineering.
 
-2. **Consider multiple approaches and tradeoffs** - Evaluate at least 3 different solutions, analyzing pros/cons, performance implications, maintainability, and scalability for each approach.
+2. **Consider approaches with KISS in mind** - Evaluate solutions, but prefer the simplest one that solves the problem. Avoid premature optimization and YAGNI violations.
 
-3. **Ultra-think through edge cases and error handling** - Systematically identify potential failure modes, boundary conditions, race conditions, security vulnerabilities, and exceptional scenarios.
+3. **Think through edge cases** - Identify potential failure modes, boundary conditions, and security vulnerabilities relevant to the actual requirements.
 
-4. **Plan the architecture before coding** - Design the system architecture, data flow, component interactions, and integration points. Consider patterns, principles (SOLID, DRY, KISS), and best practices.
+4. **Follow Clean Code principles** - Keep functions small and focused. One responsibility per class. Meaningful names. No unnecessary abstractions.
 
-5. **Optimize for clarity, correctness, and maintainability** - Prioritize code readability, comprehensive error handling, proper documentation, testability, and long-term maintenance over premature optimization.
+5. **Optimize for clarity and correctness** - Prioritize readability and maintainability. Don't add features, refactor code, or make "improvements" beyond what was asked.
 
 ## Process:
 
-- Start with broad analysis and progressively refine understanding
-- Question assumptions and revisit earlier thoughts when new insights emerge
-- Branch into alternative approaches when needed
-- Generate and verify solution hypotheses
-- Continue until a robust, well-reasoned solution is reached
+- Start simple and only add complexity when justified
+- Question whether each addition is truly necessary
+- Prefer explicit over clever
+- Leave code cleaner than you found it (Boy Scout Rule)
 
-Take your time to think deeply about the best solution. Quality of analysis takes precedence over speed.
+Analyze thoroughly but implement simply.

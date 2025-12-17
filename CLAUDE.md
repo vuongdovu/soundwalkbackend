@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Codebase Exploration
+
+**Always use Serena MCP tools for codebase exploration.** Do not use the built-in Explore agent or raw grep/glob searches. Serena provides semantic code understanding.
+
+Preferred tools for exploration:
+- `get_symbols_overview` - High-level view of classes/functions in a file
+- `find_symbol` - Search by symbol name path (e.g., `MyClass/my_method`)
+- `find_referencing_symbols` - Find all references to a symbol
+- `search_for_pattern` - Regex search when symbol name is unknown
+
 ## Project Overview
 
 Django 5.2 LTS skeleton with pre-configured SaaS infrastructure: REST API (DRF), JWT auth (dj-rest-auth + allauth), PostgreSQL 16, Redis, Celery, WebSocket (Channels), Stripe, AI providers (OpenAI/Anthropic), push notifications.

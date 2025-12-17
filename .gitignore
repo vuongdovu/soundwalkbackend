@@ -1,8 +1,8 @@
 # IDE
 \.idea
 */\.idea
-\.DS_Store
-*\/\.DS_Store
+.DS_Store
+**/.DS_Store
 
 .vscode
 .vscode/*
