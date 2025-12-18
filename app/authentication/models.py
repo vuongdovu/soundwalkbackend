@@ -29,6 +29,7 @@ from django.db.models.functions import Lower
 
 from core.models import BaseModel
 from authentication.managers import UserManager
+from core.model_mixins import UUIDPrimaryKeyMixin
 
 
 # Reserved usernames that cannot be used
@@ -104,7 +105,7 @@ def validate_username_format(value):
         )
 
 
-class User(AbstractBaseUser, PermissionsMixin):
+class User(AbstractBaseUser, PermissionsMixin, UUIDPrimaryKeyMixin):
     """
     Custom User model using email as the primary identifier.
 
@@ -134,14 +135,6 @@ class User(AbstractBaseUser, PermissionsMixin):
             password='adminpassword'
         )
     """
-
-    # UUID primary key - consistent with payment models, non-enumerable
-    id = models.UUIDField(
-        primary_key=True,
-        default=uuid.uuid4,
-        editable=False,
-        help_text="Unique identifier for this user",
-    )
 
     # Primary identifier (replaces username)
     email = models.EmailField(
