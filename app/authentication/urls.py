@@ -32,12 +32,14 @@ Note:
 """
 
 from django.urls import path
+from authentication.views import CookieTokenRefreshView
 
 from authentication.views import (
     AppleLoginView,
     DeactivateAccountView,
     EmailVerificationView,
     GoogleLoginView,
+    LinkedInLoginView,
     ProfileView,
     ResendEmailView,
     BiometricEnrollView,
@@ -50,9 +52,11 @@ from authentication.views import (
 app_name = "authentication"
 
 urlpatterns = [
+    path("token/refresh/", CookieTokenRefreshView.as_view(), name="cookie_token_refresh"),
     # Social authentication
     path("google/", GoogleLoginView.as_view(), name="google-login"),
     path("apple/", AppleLoginView.as_view(), name="apple-login"),
+    path("linkedin/", LinkedInLoginView.as_view(), name="linkedin-login"),
     # Profile management (handles both completion and updates)
     path("profile/", ProfileView.as_view(), name="profile"),
     # Email verification

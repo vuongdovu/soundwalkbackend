@@ -72,6 +72,7 @@ from core.views import health_check
 api_v1_patterns = [
     # Authentication (dj-rest-auth)
     path("auth/", include("dj_rest_auth.urls")),
+    path("accounts/", include("allauth.urls")),
     # Custom authentication (profile, verify-email, etc.)
     path("auth/", include("authentication.urls")),
     # Registration
