@@ -1,3 +1,12 @@
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from authentication.models import User
+
+logger = logging.getLogger(__name__)
 
 
 class BiometricService:
@@ -110,6 +119,8 @@ class BiometricService:
         Raises:
             ValueError: If public key is invalid
         """
+        from authentication.services.auth_service import AuthService
+
         # Validate public key format
         BiometricService._validate_public_key(public_key)
 

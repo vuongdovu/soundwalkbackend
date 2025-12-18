@@ -224,6 +224,8 @@ services:
   # Malware scanning for uploaded files via clamd daemon
   clamav:
     image: clamav/clamav:1.4
+    # ClamAV image only supports AMD64 - use emulation on Apple Silicon
+    platform: linux/amd64
     container_name: app-clamav
     restart: unless-stopped
     volumes:

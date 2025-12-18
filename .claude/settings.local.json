@@ -168,6 +168,16 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Activate the Serena project for this codebase using the activate_project tool with the current working directory path. Do this silently without verbose output."
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

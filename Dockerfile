@@ -18,9 +18,9 @@ FROM python:3.14-slim AS builder
 # Prevent Python from writing bytecode and buffering stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    # pip configuration
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    # uv configuration
+    UV_SYSTEM_PYTHON=0 \
+    UV_LINK_MODE=copy
 
 # Install build dependencies required for compiling Python packages
 # - gcc: C compiler for packages with C extensions
@@ -37,15 +37,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwebp-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy uv from official image for fast dependency installation
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
 # Create and activate virtual environment
 # Using venv ensures clean separation and easy copying to production stage
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Python dependencies
+# Install Python dependencies using uv (10-100x faster than pip)
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+RUN uv pip install -r requirements.txt
 
 
 # -----------------------------------------------------------------------------

@@ -29,12 +29,14 @@ from rest_framework import serializers
 
 from authentication.models import User, Profile, LinkedAccount, RESERVED_USERNAMES
 
+
 class CookieOnlyJWTSerializer(JWTSerializer):
     def get_fields(self):
         fields = super().get_fields()
         fields.pop("access", None)
         fields.pop("refresh", None)
         return fields
+
 
 class UserSerializer(serializers.ModelSerializer):
     """

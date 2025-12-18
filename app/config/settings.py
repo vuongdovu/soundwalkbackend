@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     "dj_rest_auth.registration",
     "django_celery_beat",
     "drf_spectacular",
+    "django_filters",
     # Local apps
     "core",
     "authentication",
@@ -225,6 +226,10 @@ REST_FRAMEWORK = {
     # Pagination
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    # Filtering
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+    ],
     # Throttling (rate limiting)
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
@@ -292,16 +297,12 @@ SIMPLE_JWT = {
 # =============================================================================
 REST_AUTH = {
     "USE_JWT": True,
-
     "JWT_AUTH_COOKIE": "access",
     "JWT_AUTH_REFRESH_COOKIE": "refresh",
     "JWT_AUTH_HTTPONLY": True,
-
-    "JWT_AUTH_SECURE": True,          # https only
-    "JWT_AUTH_SAMESITE": "Lax", 
-
-    "JWT_AUTH_COOKIE_USE_CSRF": True, # CSRF protection not needed for JWT (Change this to true if you are using CSRF protection))
-
+    "JWT_AUTH_SECURE": True,  # https only
+    "JWT_AUTH_SAMESITE": "Lax",
+    "JWT_AUTH_COOKIE_USE_CSRF": True,  # CSRF protection not needed for JWT (Change this to true if you are using CSRF protection))
     "USER_DETAILS_SERIALIZER": "authentication.serializers.UserSerializer",
     "REGISTER_SERIALIZER": "authentication.serializers.RegisterSerializer",
     "LOGIN_SERIALIZER": "authentication.serializers.UsernameLoginSerializer",
@@ -361,7 +362,7 @@ SOCIALACCOUNT_PROVIDERS = {
                 },
             }
         ]
-    }
+    },
 }
 
 # =============================================================================
@@ -631,3 +632,13 @@ CHANNEL_LAYERS = {
         },
     },
 }
+
+# =============================================================================
+# Django Silk Configuration (Profiling - DEBUG only)
+# =============================================================================
+if DEBUG:
+    INSTALLED_APPS += ["silk"]
+    MIDDLEWARE.insert(0, "silk.middleware.SilkyMiddleware")
+    SILKY_PYTHON_PROFILER = True
+    SILKY_PYTHON_PROFILER_BINARY = True
+    SILKY_META = True

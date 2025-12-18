@@ -78,8 +78,10 @@ from rest_framework.permissions import AllowAny
 # Refresh JWT Views
 # =============================================================================
 
+
 def _seconds(td):
     return int(td.total_seconds())
+
 
 def _cookie_base_kwargs():
     rest_auth = getattr(settings, "REST_AUTH", {})
@@ -88,6 +90,7 @@ def _cookie_base_kwargs():
         "secure": rest_auth.get("JWT_AUTH_SECURE", not settings.DEBUG),
         "samesite": rest_auth.get("JWT_AUTH_SAMESITE", "Lax"),
     }
+
 
 class CookieTokenRefreshView(APIView):
     permission_classes = [AllowAny]
@@ -100,19 +103,25 @@ class CookieTokenRefreshView(APIView):
 
         refresh_token = request.COOKIES.get(refresh_cookie_name)
         if not refresh_token:
-            return Response({"detail": "No refresh cookie"}, status=status.HTTP_401_UNAUTHORIZED)
+            return Response(
+                {"detail": "No refresh cookie"}, status=status.HTTP_401_UNAUTHORIZED
+            )
 
         try:
             serializer = TokenRefreshSerializer(data={"refresh": refresh_token})
             serializer.is_valid(raise_exception=True)
         except TokenError:
             # Refresh is invalid/expired -> treat as logged out
-            resp = Response({"detail": "Refresh expired"}, status=status.HTTP_401_UNAUTHORIZED)
+            resp = Response(
+                {"detail": "Refresh expired"}, status=status.HTTP_401_UNAUTHORIZED
+            )
             resp.delete_cookie(access_cookie_name, path="/")
             resp.delete_cookie(refresh_cookie_name, path="/api/v1/auth/token/refresh/")
             return resp
 
-        data = serializer.validated_data  # contains "access", and maybe "refresh" if rotation is on
+        data = (
+            serializer.validated_data
+        )  # contains "access", and maybe "refresh" if rotation is on
 
         access_lifetime = settings.SIMPLE_JWT["ACCESS_TOKEN_LIFETIME"]
         refresh_lifetime = settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"]
@@ -140,6 +149,7 @@ class CookieTokenRefreshView(APIView):
             )
 
         return resp
+
 
 # =============================================================================
 # Social Authentication Views
@@ -176,38 +186,6 @@ class LinkedInLoginView(SocialLoginView):
         return super().post(request, *args, **kwargs)
 
 
-
-class LinkedInOIDCAdapter(OpenIDConnectAdapter):
-    """Adapter to use LinkedIn as an OpenID Connect provider."""
-
-    provider_id = "linkedin"
-
-    def __init__(self, request):
-        super().__init__(request, provider_id=self.provider_id)
-
-
-class LinkedInLoginView(SocialLoginView):
-    """
-    API view for LinkedIn OpenID Connect authentication.
-
-    POST with either an authorization code (plus redirect_uri) or an access token.
-    """
-
-    adapter_class = LinkedInOIDCAdapter
-    client_class = OAuth2Client
-
-    def post(self, request, *args, **kwargs):
-        callback_url = request.data.get("callback_url")
-        if not callback_url:
-            return Response(
-                {"detail": "Missing callback_url for LinkedIn OAuth."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        self.callback_url = callback_url
-        return super().post(request, *args, **kwargs)
-
-
-
 @extend_schema(
     summary="Sign in with Google",
     description=(
@@ -216,7 +194,6 @@ class LinkedInLoginView(SocialLoginView):
     ),
     tags=["Auth"],
 )
-
 @extend_schema(
     summary="Sign in with Google",
     description=(

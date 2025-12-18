@@ -9,6 +9,7 @@ URL Structure:
     /admin/                        - Django admin interface
     /health/                       - Health check endpoint (for load balancers, Docker)
     /schema/                       - OpenAPI schema (YAML)
+    /silk/                         - Django Silk profiler (DEBUG only)
     /api/v1/auth/                  - Authentication endpoints (dj-rest-auth)
         login/                     - Email/password login
         logout/                    - Logout
@@ -58,6 +59,7 @@ For more information, see:
 https://docs.djangoproject.com/en/5.2/topics/http/urls/
 """
 
+from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 from django.views.generic import TemplateView
@@ -112,3 +114,9 @@ urlpatterns = [
 admin.site.site_header = "Application Admin"
 admin.site.site_title = "Admin Portal"
 admin.site.index_title = "Welcome to the Admin Portal"
+
+# =============================================================================
+# Debug-only URLs
+# =============================================================================
+if settings.DEBUG:
+    urlpatterns += [path("silk/", include("silk.urls", namespace="silk"))]
