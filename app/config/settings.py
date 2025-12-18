@@ -634,9 +634,13 @@ CHANNEL_LAYERS = {
 }
 
 # =============================================================================
-# Django Silk Configuration (Profiling - DEBUG only)
+# Django Silk Configuration (Profiling - DEBUG only, not during tests)
 # =============================================================================
-if DEBUG:
+import sys
+
+TESTING = "pytest" in sys.modules or "test" in sys.argv
+
+if DEBUG and not TESTING:
     INSTALLED_APPS += ["silk"]
     MIDDLEWARE.insert(0, "silk.middleware.SilkyMiddleware")
     SILKY_PYTHON_PROFILER = True

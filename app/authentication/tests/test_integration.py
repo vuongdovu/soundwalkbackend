@@ -175,11 +175,12 @@ class TestEmailRegistrationFlow:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        assert "access" in response.data
-        assert "refresh" in response.data
+        # JWT tokens are now in HTTP-only cookies, not response body
+        assert "access" in response.cookies
+        assert "refresh" in response.cookies
 
-        # Store tokens for authenticated requests
-        access_token = response.data["access"]
+        # Store access token for authenticated requests
+        access_token = response.cookies["access"].value
 
         # Step 4: Check profile shows incomplete
         # -------------------------------------
@@ -536,7 +537,8 @@ class TestPasswordResetFlow:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
-        assert "access" in response.data
+        # JWT tokens are now in HTTP-only cookies, not response body
+        assert "access" in response.cookies
 
     def test_password_reset_invalidates_other_tokens(self, db):
         """
