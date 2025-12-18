@@ -42,7 +42,9 @@ from django.conf import settings
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.oauth2.client import OAuth2Client
-from allauth.socialaccount.providers.openid_connect.views import OpenIDConnectOAuth2Adapter
+from allauth.socialaccount.providers.openid_connect.views import (
+    OpenIDConnectOAuth2Adapter,
+)
 from dj_rest_auth.registration.views import SocialLoginView
 from drf_spectacular.utils import (
     extend_schema,

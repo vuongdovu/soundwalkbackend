@@ -17,6 +17,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -636,8 +637,6 @@ CHANNEL_LAYERS = {
 # =============================================================================
 # Django Silk Configuration (Profiling - DEBUG only, not during tests)
 # =============================================================================
-import sys
-
 TESTING = "pytest" in sys.modules or "test" in sys.argv
 
 if DEBUG and not TESTING:

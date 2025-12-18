@@ -19,7 +19,6 @@ Security:
 """
 
 import re
-import uuid
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.conf import settings

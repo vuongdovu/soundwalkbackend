@@ -14,8 +14,8 @@ djangorestframework==3.16.1        # REST API framework (Django 5.2 support)
 # -----------------------------------------------------------------------------
 # Authentication & Social Login
 # -----------------------------------------------------------------------------
-dj-rest-auth[with_social]==7.0.0   # REST endpoints for auth (django-allauth>=64 support)
-django-allauth==0.61.1           # Social authentication (Google, Apple)
+dj-rest-auth[with_social]==7.0.1   # REST endpoints for auth (requires allauth>64.0.0)
+django-allauth[socialaccount]==65.3.0  # Social authentication (Google, Apple)
 djangorestframework-simplejwt==5.3.1  # JWT token authentication
 cryptography==44.0.0               # ECDSA signature verification for biometric auth
 
