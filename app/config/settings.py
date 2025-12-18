@@ -83,6 +83,7 @@ INSTALLED_APPS = [
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
     "allauth.socialaccount.providers.apple",
+    "allauth.socialaccount.providers.openid_connect",
     "dj_rest_auth",
     "dj_rest_auth.registration",
     "django_celery_beat",
@@ -318,6 +319,9 @@ ACCOUNT_EMAIL_VERIFICATION = "optional"  # "mandatory" for production
 # Custom adapters for social auth
 ACCOUNT_ADAPTER = "authentication.adapters.CustomAccountAdapter"
 SOCIALACCOUNT_ADAPTER = "authentication.adapters.CustomSocialAccountAdapter"
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+SOCIALACCOUNT_AUTO_SIGNUP = True
 
 # Social account providers configuration
 SOCIALACCOUNT_PROVIDERS = {
@@ -340,6 +344,19 @@ SOCIALACCOUNT_PROVIDERS = {
         },
         "SCOPE": ["email", "name"],
     },
+    "openid_connect": {
+        "APPS": [
+            {
+                "provider_id": "linkedin",
+                "name": "LinkedIn",
+                "client_id": env("LINKEDIN_CLIENT_ID", default=""),
+                "secret": env("LINKEDIN_CLIENT_SECRET", default=""),
+                "settings": {
+                    "server_url": "https://www.linkedin.com/oauth",
+                },
+            }
+        ]
+    }
 }
 
 # =============================================================================

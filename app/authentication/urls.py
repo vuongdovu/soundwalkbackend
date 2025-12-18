@@ -39,6 +39,7 @@ from authentication.views import (
     DeactivateAccountView,
     EmailVerificationView,
     GoogleLoginView,
+    LinkedInLoginView,
     ProfileView,
     ResendEmailView,
     BiometricEnrollView,
@@ -55,6 +56,7 @@ urlpatterns = [
     # Social authentication
     path("google/", GoogleLoginView.as_view(), name="google-login"),
     path("apple/", AppleLoginView.as_view(), name="apple-login"),
+    path("linkedin/", LinkedInLoginView.as_view(), name="linkedin-login"),
     # Profile management (handles both completion and updates)
     path("profile/", ProfileView.as_view(), name="profile"),
     # Email verification

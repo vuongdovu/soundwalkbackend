@@ -37,8 +37,12 @@ Note:
     If profile.username is empty, username is required in the request.
 """
 
+from django.conf import settings
+
 from allauth.socialaccount.providers.apple.views import AppleOAuth2Adapter
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from allauth.socialaccount.providers.oauth2.client import OAuth2Client
+from allauth.socialaccount.providers.openid_connect.views import OpenIDConnectAdapter
 from dj_rest_auth.registration.views import SocialLoginView
 from drf_spectacular.utils import (
     extend_schema,
@@ -142,6 +146,37 @@ class CookieTokenRefreshView(APIView):
 # =============================================================================
 
 
+class LinkedInOIDCAdapter(OpenIDConnectAdapter):
+    """Adapter to use LinkedIn as an OpenID Connect provider."""
+
+    provider_id = "linkedin"
+
+    def __init__(self, request):
+        super().__init__(request, provider_id=self.provider_id)
+
+
+class LinkedInLoginView(SocialLoginView):
+    """
+    API view for LinkedIn OpenID Connect authentication.
+
+    POST with either an authorization code (plus redirect_uri) or an access token.
+    """
+
+    adapter_class = LinkedInOIDCAdapter
+    client_class = OAuth2Client
+
+    def post(self, request, *args, **kwargs):
+        callback_url = request.data.get("callback_url")
+        if not callback_url:
+            return Response(
+                {"detail": "Missing callback_url for LinkedIn OAuth."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        self.callback_url = callback_url
+        return super().post(request, *args, **kwargs)
+
+
+
 class GoogleLoginView(SocialLoginView):
     """
     API view for Google OAuth2 authentication.
@@ -176,7 +211,8 @@ class GoogleLoginView(SocialLoginView):
     """
 
     adapter_class = GoogleOAuth2Adapter
-
+    client_class = OAuth2Client
+    callback_url = "http://localhost:3000"
 
 class AppleLoginView(SocialLoginView):
     """
