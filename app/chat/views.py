@@ -102,6 +102,11 @@ User = get_user_model()
         summary="Get conversation",
         tags=["Chat - Conversations"],
     ),
+    update=extend_schema(
+        operation_id="replace_conversation",
+        summary="Replace conversation",
+        tags=["Chat - Conversations"],
+    ),
     partial_update=extend_schema(
         operation_id="update_conversation",
         summary="Update conversation",
@@ -422,6 +427,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
     retrieve=extend_schema(
         operation_id="get_participant",
         summary="Get participant",
+        tags=["Chat - Participants"],
+    ),
+    update=extend_schema(
+        operation_id="replace_participant",
+        summary="Replace participant",
         tags=["Chat - Participants"],
     ),
     partial_update=extend_schema(
