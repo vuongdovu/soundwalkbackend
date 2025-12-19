@@ -32,7 +32,12 @@ from urllib.parse import unquote
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiResponse,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -81,6 +86,13 @@ from chat.services import (
 User = get_user_model()
 
 
+@extend_schema_view(
+    list=extend_schema(tags=["Chat - Conversations"]),
+    create=extend_schema(tags=["Chat - Conversations"]),
+    retrieve=extend_schema(tags=["Chat - Conversations"]),
+    partial_update=extend_schema(tags=["Chat - Conversations"]),
+    destroy=extend_schema(tags=["Chat - Conversations"]),
+)
 class ConversationViewSet(viewsets.ModelViewSet):
     """
     ViewSet for conversation operations.
@@ -257,6 +269,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(tags=["Chat - Conversations"])
     @action(detail=True, methods=["post"])
     def read(self, request, pk=None):
         """Mark conversation as read."""
@@ -275,6 +288,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response({"status": "read"})
 
+    @extend_schema(tags=["Chat - Conversations"])
     @action(detail=True, methods=["post"])
     def leave(self, request, pk=None):
         """Leave the conversation."""
@@ -293,6 +307,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response({"status": "left"})
 
+    @extend_schema(tags=["Chat - Conversations"])
     @action(detail=True, methods=["post"], url_path="transfer-ownership")
     def transfer_ownership(self, request, pk=None):
         """Transfer group ownership to another participant."""
@@ -361,6 +376,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
         return Response(PresenceSerializer(result.data, many=True).data)
 
 
+@extend_schema_view(
+    list=extend_schema(tags=["Chat - Participants"]),
+    create=extend_schema(tags=["Chat - Participants"]),
+    retrieve=extend_schema(tags=["Chat - Participants"]),
+    partial_update=extend_schema(tags=["Chat - Participants"]),
+    destroy=extend_schema(tags=["Chat - Participants"]),
+)
 class ParticipantViewSet(viewsets.ModelViewSet):
     """
     ViewSet for participant operations within a conversation.
@@ -533,6 +555,12 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema_view(
+    list=extend_schema(tags=["Chat - Messages"]),
+    create=extend_schema(tags=["Chat - Messages"]),
+    retrieve=extend_schema(tags=["Chat - Messages"]),
+    destroy=extend_schema(tags=["Chat - Messages"]),
+)
 class MessageViewSet(viewsets.ModelViewSet):
     """
     ViewSet for message operations within a conversation.
