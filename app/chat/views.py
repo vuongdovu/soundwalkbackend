@@ -87,11 +87,31 @@ User = get_user_model()
 
 
 @extend_schema_view(
-    list=extend_schema(tags=["Chat - Conversations"]),
-    create=extend_schema(tags=["Chat - Conversations"]),
-    retrieve=extend_schema(tags=["Chat - Conversations"]),
-    partial_update=extend_schema(tags=["Chat - Conversations"]),
-    destroy=extend_schema(tags=["Chat - Conversations"]),
+    list=extend_schema(
+        operation_id="list_conversations",
+        summary="List conversations",
+        tags=["Chat - Conversations"],
+    ),
+    create=extend_schema(
+        operation_id="create_conversation",
+        summary="Create conversation",
+        tags=["Chat - Conversations"],
+    ),
+    retrieve=extend_schema(
+        operation_id="get_conversation",
+        summary="Get conversation",
+        tags=["Chat - Conversations"],
+    ),
+    partial_update=extend_schema(
+        operation_id="update_conversation",
+        summary="Update conversation",
+        tags=["Chat - Conversations"],
+    ),
+    destroy=extend_schema(
+        operation_id="delete_conversation",
+        summary="Delete conversation",
+        tags=["Chat - Conversations"],
+    ),
 )
 class ConversationViewSet(viewsets.ModelViewSet):
     """
@@ -269,7 +289,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @extend_schema(tags=["Chat - Conversations"])
+    @extend_schema(
+        operation_id="mark_conversation_read",
+        summary="Mark conversation as read",
+        tags=["Chat - Conversations"],
+    )
     @action(detail=True, methods=["post"])
     def read(self, request, pk=None):
         """Mark conversation as read."""
@@ -288,7 +312,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response({"status": "read"})
 
-    @extend_schema(tags=["Chat - Conversations"])
+    @extend_schema(
+        operation_id="leave_conversation",
+        summary="Leave conversation",
+        tags=["Chat - Conversations"],
+    )
     @action(detail=True, methods=["post"])
     def leave(self, request, pk=None):
         """Leave the conversation."""
@@ -307,7 +335,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         return Response({"status": "left"})
 
-    @extend_schema(tags=["Chat - Conversations"])
+    @extend_schema(
+        operation_id="transfer_conversation_ownership",
+        summary="Transfer conversation ownership",
+        tags=["Chat - Conversations"],
+    )
     @action(detail=True, methods=["post"], url_path="transfer-ownership")
     def transfer_ownership(self, request, pk=None):
         """Transfer group ownership to another participant."""
@@ -377,11 +409,31 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
 
 @extend_schema_view(
-    list=extend_schema(tags=["Chat - Participants"]),
-    create=extend_schema(tags=["Chat - Participants"]),
-    retrieve=extend_schema(tags=["Chat - Participants"]),
-    partial_update=extend_schema(tags=["Chat - Participants"]),
-    destroy=extend_schema(tags=["Chat - Participants"]),
+    list=extend_schema(
+        operation_id="list_participants",
+        summary="List participants",
+        tags=["Chat - Participants"],
+    ),
+    create=extend_schema(
+        operation_id="add_participant",
+        summary="Add participant",
+        tags=["Chat - Participants"],
+    ),
+    retrieve=extend_schema(
+        operation_id="get_participant",
+        summary="Get participant",
+        tags=["Chat - Participants"],
+    ),
+    partial_update=extend_schema(
+        operation_id="update_participant_role",
+        summary="Update participant role",
+        tags=["Chat - Participants"],
+    ),
+    destroy=extend_schema(
+        operation_id="remove_participant",
+        summary="Remove participant",
+        tags=["Chat - Participants"],
+    ),
 )
 class ParticipantViewSet(viewsets.ModelViewSet):
     """
@@ -556,10 +608,26 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
 
 @extend_schema_view(
-    list=extend_schema(tags=["Chat - Messages"]),
-    create=extend_schema(tags=["Chat - Messages"]),
-    retrieve=extend_schema(tags=["Chat - Messages"]),
-    destroy=extend_schema(tags=["Chat - Messages"]),
+    list=extend_schema(
+        operation_id="list_messages",
+        summary="List messages",
+        tags=["Chat - Messages"],
+    ),
+    create=extend_schema(
+        operation_id="send_message",
+        summary="Send message",
+        tags=["Chat - Messages"],
+    ),
+    retrieve=extend_schema(
+        operation_id="get_message",
+        summary="Get message",
+        tags=["Chat - Messages"],
+    ),
+    destroy=extend_schema(
+        operation_id="delete_message",
+        summary="Delete message",
+        tags=["Chat - Messages"],
+    ),
 )
 class MessageViewSet(viewsets.ModelViewSet):
     """
