@@ -36,6 +36,8 @@ from chat.models import (
     ConversationType,
     DirectConversationPair,
     Message,
+    MessageEditHistory,
+    MessageReaction,
     MessageType,
     Participant,
     ParticipantRole,
@@ -347,3 +349,52 @@ class SystemMessageFactory(MessageFactory):
             }
         )
         return cls(conversation=conversation, content=content)
+
+
+class MessageReactionFactory(factory.django.DjangoModelFactory):
+    """
+    Factory for MessageReaction model.
+
+    Creates a reaction to a message.
+
+    Examples:
+        # Reaction with default emoji
+        reaction = MessageReactionFactory(message=msg, user=user)
+
+        # Reaction with specific emoji
+        reaction = MessageReactionFactory(emoji="❤️")
+
+        # Multiple reactions to same message
+        reaction1 = MessageReactionFactory(message=msg, emoji="👍")
+        reaction2 = MessageReactionFactory(message=msg, emoji="😂")
+    """
+
+    class Meta:
+        model = MessageReaction
+
+    message = factory.SubFactory(MessageFactory)
+    user = factory.SubFactory(UserFactory)
+    emoji = factory.Iterator(["👍", "❤️", "😂", "😮", "😢", "🎉"])
+
+
+class MessageEditHistoryFactory(factory.django.DjangoModelFactory):
+    """
+    Factory for MessageEditHistory model.
+
+    Creates an edit history record for a message.
+
+    Examples:
+        # Single edit record
+        history = MessageEditHistoryFactory(message=msg, edit_number=1)
+
+        # Full edit history
+        history1 = MessageEditHistoryFactory(message=msg, edit_number=1, content="First version")
+        history2 = MessageEditHistoryFactory(message=msg, edit_number=2, content="Second version")
+    """
+
+    class Meta:
+        model = MessageEditHistory
+
+    message = factory.SubFactory(MessageFactory)
+    content = factory.Faker("paragraph", nb_sentences=2)
+    edit_number = factory.Sequence(lambda n: n + 1)

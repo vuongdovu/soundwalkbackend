@@ -41,6 +41,8 @@ from chat.models import (
     Conversation,
     ConversationType,
     Message,
+    MessageEditHistory,
+    MessageReaction,
     Participant,
     ParticipantRole,
     SystemMessageEvent,
@@ -152,8 +154,8 @@ class MessageSerializer(serializers.ModelSerializer):
     """
     Full message serializer for message lists.
 
-    Includes sender details, threading information, and proper
-    handling of deleted/system messages.
+    Includes sender details, threading information, edit metadata,
+    and proper handling of deleted/system messages.
     """
 
     sender = UserSerializer(read_only=True, allow_null=True)
@@ -167,6 +169,8 @@ class MessageSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     reply_count = serializers.IntegerField(read_only=True)
+    edit_count = serializers.IntegerField(read_only=True)
+    edited_at = serializers.DateTimeField(read_only=True, allow_null=True)
 
     class Meta:
         model = Message
@@ -179,6 +183,8 @@ class MessageSerializer(serializers.ModelSerializer):
             "is_deleted",
             "parent_id",
             "reply_count",
+            "edit_count",
+            "edited_at",
             "created_at",
             "updated_at",
         ]
@@ -216,6 +222,183 @@ class MessageCreateSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text="Parent message ID for threading (optional)",
+    )
+
+
+class MessageEditSerializer(serializers.Serializer):
+    """
+    Serializer for editing message content.
+
+    Validates that content is not empty.
+    """
+
+    content = serializers.CharField(
+        max_length=10000,
+        help_text="New message content (max 10,000 characters)",
+    )
+
+
+class MessageEditHistorySerializer(serializers.ModelSerializer):
+    """
+    Serializer for message edit history entries.
+
+    Each entry represents a previous version of the message content.
+    """
+
+    class Meta:
+        model = MessageEditHistory
+        fields = [
+            "id",
+            "content",
+            "edit_number",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+# =============================================================================
+# Reaction Serializers
+# =============================================================================
+
+
+class ReactionSerializer(serializers.ModelSerializer):
+    """
+    Read serializer for message reactions.
+
+    Includes user info who added the reaction.
+    """
+
+    user = UserSerializer(read_only=True)
+
+    class Meta:
+        model = MessageReaction
+        fields = [
+            "id",
+            "emoji",
+            "user",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ReactionCreateSerializer(serializers.Serializer):
+    """
+    Serializer for adding reactions.
+
+    Validates emoji input.
+    """
+
+    emoji = serializers.CharField(
+        max_length=8,
+        help_text="Emoji character(s) to react with",
+    )
+
+    def validate_emoji(self, value: str) -> str:
+        """Ensure emoji is not empty."""
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Emoji cannot be empty")
+        return value
+
+
+class ReactionToggleResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for toggle reaction endpoint.
+
+    Indicates whether the reaction was added or removed.
+    """
+
+    added = serializers.BooleanField(
+        help_text="True if reaction was added, False if removed"
+    )
+    reaction = ReactionSerializer(
+        allow_null=True, help_text="Reaction data if added, null if removed"
+    )
+
+
+# =============================================================================
+# Search Serializers
+# =============================================================================
+
+
+class MessageSearchResultSerializer(serializers.ModelSerializer):
+    """
+    Serializer for search result messages.
+
+    Includes conversation_id for context.
+    """
+
+    sender = UserSerializer(read_only=True)
+
+    class Meta:
+        model = Message
+        fields = [
+            "id",
+            "conversation_id",
+            "sender",
+            "content",
+            "created_at",
+            "edited_at",
+            "edit_count",
+        ]
+        read_only_fields = fields
+
+
+class SearchResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for message search endpoint.
+
+    Includes paginated results and cursor for next page.
+    """
+
+    results = MessageSearchResultSerializer(many=True)
+    next_cursor = serializers.CharField(allow_null=True)
+    has_more = serializers.BooleanField()
+
+
+# =============================================================================
+# Presence Serializers
+# =============================================================================
+
+
+class PresenceSerializer(serializers.Serializer):
+    """
+    Serializer for presence data.
+
+    Used for both single user and bulk presence responses.
+    """
+
+    user_id = serializers.UUIDField()
+    status = serializers.ChoiceField(choices=["online", "away", "offline"])
+    last_seen = serializers.DateTimeField(allow_null=True)
+
+
+class PresenceSetSerializer(serializers.Serializer):
+    """
+    Input serializer for setting user presence.
+    """
+
+    status = serializers.ChoiceField(
+        choices=["online", "away", "offline"],
+        help_text="User presence status",
+    )
+    conversation_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text="Optional conversation ID for per-conversation presence",
+    )
+
+
+class BulkPresenceRequestSerializer(serializers.Serializer):
+    """
+    Input serializer for bulk presence query.
+    """
+
+    user_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=100,
+        help_text="List of user IDs to query presence for",
     )
 
 

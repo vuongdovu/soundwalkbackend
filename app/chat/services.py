@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from django.db import transaction
@@ -51,11 +52,14 @@ from django.utils import timezone
 
 from core.services import BaseService, ServiceResult
 
+from chat.constants import MESSAGE_CONFIG, PRESENCE_CONFIG, REACTION_CONFIG
 from chat.models import (
     Conversation,
     ConversationType,
     DirectConversationPair,
     Message,
+    MessageEditHistory,
+    MessageReaction,
     MessageType,
     Participant,
     ParticipantRole,
@@ -1206,6 +1210,179 @@ class MessageService(BaseService):
         return ServiceResult.success(None)
 
     @classmethod
+    def edit_message(
+        cls,
+        user: User,
+        message_id: int,
+        new_content: str,
+    ) -> ServiceResult[Message]:
+        """
+        Edit a message within the allowed time window.
+
+        Only the original author can edit their message. Edits are tracked
+        with timestamps and counts. The original content is preserved on
+        first edit, and each edit creates a history entry.
+
+        Args:
+            user: User attempting to edit
+            message_id: ID of message to edit
+            new_content: New message content
+
+        Returns:
+            ServiceResult with updated Message
+
+        Error codes:
+            MESSAGE_NOT_FOUND: Message does not exist
+            NOT_AUTHOR: User is not the message author
+            EDIT_TIME_EXPIRED: Edit time window has passed
+            MAX_EDITS_REACHED: Maximum edit count reached
+            MESSAGE_DELETED: Cannot edit deleted messages
+            SYSTEM_MESSAGE: Cannot edit system messages
+            EMPTY_CONTENT: Content cannot be empty
+        """
+        # Validate content
+        new_content = new_content.strip() if new_content else ""
+        if not new_content:
+            return ServiceResult.failure(
+                "Message content cannot be empty",
+                error_code="EMPTY_CONTENT",
+            )
+
+        # Get the message
+        try:
+            message = Message.objects.select_related("conversation").get(id=message_id)
+        except Message.DoesNotExist:
+            return ServiceResult.failure(
+                "Message not found",
+                error_code="MESSAGE_NOT_FOUND",
+            )
+
+        # Cannot edit system messages
+        if message.is_system_message:
+            return ServiceResult.failure(
+                "Cannot edit system messages",
+                error_code="SYSTEM_MESSAGE",
+            )
+
+        # Cannot edit deleted messages
+        if message.is_deleted:
+            return ServiceResult.failure(
+                "Cannot edit deleted messages",
+                error_code="MESSAGE_DELETED",
+            )
+
+        # Check user is the author
+        if message.sender_id != user.id:
+            return ServiceResult.failure(
+                "You can only edit your own messages",
+                error_code="NOT_AUTHOR",
+            )
+
+        # Check edit time limit
+        time_since_creation = timezone.now() - message.created_at
+        if time_since_creation.total_seconds() > MESSAGE_CONFIG.EDIT_TIME_LIMIT_SECONDS:
+            return ServiceResult.failure(
+                "Edit time window has expired",
+                error_code="EDIT_TIME_EXPIRED",
+            )
+
+        with transaction.atomic():
+            # Re-fetch with lock to prevent race conditions on edit_count
+            message = Message.objects.select_for_update().get(id=message_id)
+
+            # Re-check conditions that could have changed
+            if message.is_deleted:
+                return ServiceResult.failure(
+                    "Cannot edit deleted messages",
+                    error_code="MESSAGE_DELETED",
+                )
+
+            # Check max edit count (must be inside lock to prevent race)
+            if message.edit_count >= MESSAGE_CONFIG.MAX_EDIT_COUNT:
+                return ServiceResult.failure(
+                    f"Maximum edit count ({MESSAGE_CONFIG.MAX_EDIT_COUNT}) reached",
+                    error_code="MAX_EDITS_REACHED",
+                )
+
+            # Preserve original content on first edit
+            if message.edit_count == 0 and MESSAGE_CONFIG.PRESERVE_ORIGINAL_CONTENT:
+                message.original_content = message.content
+
+            # Create edit history entry
+            MessageEditHistory.objects.create(
+                message=message,
+                content=message.content,  # Store the content before this edit
+                edit_number=message.edit_count + 1,
+            )
+
+            # Update message
+            message.content = new_content
+            message.edit_count = F("edit_count") + 1
+            message.edited_at = timezone.now()
+            message.save(
+                update_fields=[
+                    "content",
+                    "original_content",
+                    "edit_count",
+                    "edited_at",
+                    "updated_at",
+                ]
+            )
+
+            # Refresh to get the actual edit_count value (not F() expression)
+            message.refresh_from_db()
+
+        cls.get_logger().info(
+            f"User {user.id} edited message {message.id} (edit #{message.edit_count})"
+        )
+
+        return ServiceResult.success(message)
+
+    @classmethod
+    def get_edit_history(
+        cls,
+        user: User,
+        message_id: int,
+    ) -> ServiceResult[list[MessageEditHistory]]:
+        """
+        Get edit history for a message.
+
+        Only conversation participants can view edit history.
+
+        Args:
+            user: User requesting history
+            message_id: ID of message to get history for
+
+        Returns:
+            ServiceResult with list of MessageEditHistory entries (newest first)
+
+        Error codes:
+            MESSAGE_NOT_FOUND: Message does not exist
+            NOT_PARTICIPANT: User is not in the conversation
+        """
+        # Get the message
+        try:
+            message = Message.objects.select_related("conversation").get(id=message_id)
+        except Message.DoesNotExist:
+            return ServiceResult.failure(
+                "Message not found",
+                error_code="MESSAGE_NOT_FOUND",
+            )
+
+        # Check user is a participant in the conversation
+        participant = message.conversation.get_active_participant_for_user(user)
+        if not participant:
+            return ServiceResult.failure(
+                "You are not a participant in this conversation",
+                error_code="NOT_PARTICIPANT",
+            )
+
+        # Get edit history (ordered by created_at descending per model Meta)
+        history = list(message.edit_history.all())
+
+        return ServiceResult.success(history)
+
+    @classmethod
     def mark_as_read(
         cls,
         conversation: Conversation,
@@ -1312,3 +1489,1088 @@ class MessageService(BaseService):
         conversation.save(update_fields=["last_message_at", "updated_at"])
 
         return message
+
+
+# =============================================================================
+# ReactionService
+# =============================================================================
+
+
+class ReactionService:
+    """
+    Service for managing message reactions.
+
+    Handles:
+    - Adding reactions to messages
+    - Removing reactions from messages
+    - Toggle reaction (add/remove)
+    - Getting reactions for messages
+    - Atomic count updates in Message.reaction_counts
+    """
+
+    @classmethod
+    def _validate_emoji(cls, emoji: str) -> bool:
+        """
+        Validate that emoji is a valid reaction emoji.
+
+        Args:
+            emoji: The emoji string to validate
+
+        Returns:
+            True if valid, False otherwise
+        """
+        if not emoji or not emoji.strip():
+            return False
+
+        emoji = emoji.strip()
+
+        # Check max length to prevent abuse
+        if len(emoji) > REACTION_CONFIG.MAX_EMOJI_LENGTH:
+            return False
+
+        # If ALLOWED_EMOJIS is set, check against it
+        if REACTION_CONFIG.ALLOWED_EMOJIS is not None:
+            return emoji in REACTION_CONFIG.ALLOWED_EMOJIS
+
+        # Basic validation: emoji should be at least 1 character
+        return len(emoji) >= 1
+
+    @classmethod
+    def _update_reaction_count(
+        cls,
+        message: Message,
+        emoji: str,
+        delta: int,
+    ) -> None:
+        """
+        Atomically update reaction count for an emoji.
+
+        Uses select_for_update() to lock the row and prevent race conditions.
+        Must be called within a transaction.atomic() block.
+
+        Args:
+            message: Message to update
+            emoji: Emoji to update count for
+            delta: Amount to change (1 to add, -1 to remove)
+        """
+        # Lock the row to prevent concurrent modifications
+        locked_message = Message.objects.select_for_update().get(id=message.id)
+        counts = locked_message.reaction_counts or {}
+
+        current_count = counts.get(emoji, 0)
+        new_count = max(0, current_count + delta)
+
+        if new_count == 0:
+            # Remove the emoji key when count reaches 0
+            counts.pop(emoji, None)
+        else:
+            counts[emoji] = new_count
+
+        locked_message.reaction_counts = counts
+        locked_message.save(update_fields=["reaction_counts", "updated_at"])
+
+    @classmethod
+    def add_reaction(
+        cls,
+        user: "User",
+        message_id: int,
+        emoji: str,
+    ) -> ServiceResult[MessageReaction]:
+        """
+        Add a reaction to a message.
+
+        If the reaction already exists, returns the existing one (idempotent).
+        Updates Message.reaction_counts atomically.
+
+        Args:
+            user: User adding the reaction
+            message_id: ID of message to react to
+            emoji: Emoji to add
+
+        Returns:
+            ServiceResult containing the MessageReaction on success
+        """
+        # Validate emoji
+        if not cls._validate_emoji(emoji):
+            return ServiceResult.failure(
+                "Invalid emoji",
+                error_code="INVALID_EMOJI",
+            )
+
+        # Get message
+        try:
+            message = Message.objects.select_related("conversation").get(id=message_id)
+        except Message.DoesNotExist:
+            return ServiceResult.failure(
+                "Message not found",
+                error_code="MESSAGE_NOT_FOUND",
+            )
+
+        # Check if message is deleted
+        if message.is_deleted:
+            return ServiceResult.failure(
+                "Cannot react to deleted messages",
+                error_code="MESSAGE_DELETED",
+            )
+
+        # Check user is participant
+        participant = message.conversation.get_active_participant_for_user(user)
+        if not participant:
+            return ServiceResult.failure(
+                "You are not a participant in this conversation",
+                error_code="NOT_PARTICIPANT",
+            )
+
+        # Check max reactions per user per message limit
+        user_reaction_count = MessageReaction.objects.filter(
+            message=message,
+            user=user,
+        ).count()
+
+        if user_reaction_count >= REACTION_CONFIG.MAX_USER_REACTIONS_PER_MESSAGE:
+            return ServiceResult.failure(
+                f"Maximum reactions per message ({REACTION_CONFIG.MAX_USER_REACTIONS_PER_MESSAGE}) exceeded",
+                error_code="MAX_REACTIONS_EXCEEDED",
+            )
+
+        # Check if reaction already exists (idempotent)
+        existing = MessageReaction.objects.filter(
+            message=message,
+            user=user,
+            emoji=emoji,
+        ).first()
+
+        if existing:
+            return ServiceResult.success(existing)
+
+        # Create reaction
+        with transaction.atomic():
+            reaction = MessageReaction.objects.create(
+                message=message,
+                user=user,
+                emoji=emoji,
+            )
+
+            # Update count
+            cls._update_reaction_count(message, emoji, 1)
+
+        return ServiceResult.success(reaction)
+
+    @classmethod
+    def remove_reaction(
+        cls,
+        user: "User",
+        message_id: int,
+        emoji: str,
+    ) -> ServiceResult[None]:
+        """
+        Remove a reaction from a message.
+
+        Updates Message.reaction_counts atomically.
+
+        Args:
+            user: User removing the reaction
+            message_id: ID of message
+            emoji: Emoji to remove
+
+        Returns:
+            ServiceResult (data is None on success)
+        """
+        # Get message
+        try:
+            message = Message.objects.select_related("conversation").get(id=message_id)
+        except Message.DoesNotExist:
+            return ServiceResult.failure(
+                "Message not found",
+                error_code="MESSAGE_NOT_FOUND",
+            )
+
+        # Check user is participant
+        participant = message.conversation.get_active_participant_for_user(user)
+        if not participant:
+            return ServiceResult.failure(
+                "You are not a participant in this conversation",
+                error_code="NOT_PARTICIPANT",
+            )
+
+        # Find reaction
+        reaction = MessageReaction.objects.filter(
+            message=message,
+            user=user,
+            emoji=emoji,
+        ).first()
+
+        if not reaction:
+            return ServiceResult.failure(
+                "Reaction not found",
+                error_code="REACTION_NOT_FOUND",
+            )
+
+        # Delete reaction and update count
+        with transaction.atomic():
+            reaction.delete()
+            cls._update_reaction_count(message, emoji, -1)
+
+        return ServiceResult.success(None)
+
+    @classmethod
+    def toggle_reaction(
+        cls,
+        user: "User",
+        message_id: int,
+        emoji: str,
+    ) -> ServiceResult[tuple[bool, MessageReaction | None]]:
+        """
+        Toggle a reaction on a message.
+
+        If reaction exists, removes it. If not, adds it.
+
+        Args:
+            user: User toggling the reaction
+            message_id: ID of message
+            emoji: Emoji to toggle
+
+        Returns:
+            ServiceResult containing tuple (added: bool, reaction: MessageReaction | None)
+            - added=True, reaction=MessageReaction if reaction was added
+            - added=False, reaction=None if reaction was removed
+        """
+        # Validate emoji
+        if not cls._validate_emoji(emoji):
+            return ServiceResult.failure(
+                "Invalid emoji",
+                error_code="INVALID_EMOJI",
+            )
+
+        # Get message
+        try:
+            message = Message.objects.select_related("conversation").get(id=message_id)
+        except Message.DoesNotExist:
+            return ServiceResult.failure(
+                "Message not found",
+                error_code="MESSAGE_NOT_FOUND",
+            )
+
+        # Check if message is deleted
+        if message.is_deleted:
+            return ServiceResult.failure(
+                "Cannot react to deleted messages",
+                error_code="MESSAGE_DELETED",
+            )
+
+        # Check user is participant
+        participant = message.conversation.get_active_participant_for_user(user)
+        if not participant:
+            return ServiceResult.failure(
+                "You are not a participant in this conversation",
+                error_code="NOT_PARTICIPANT",
+            )
+
+        # Check if reaction exists
+        existing = MessageReaction.objects.filter(
+            message=message,
+            user=user,
+            emoji=emoji,
+        ).first()
+
+        if existing:
+            # Remove reaction
+            with transaction.atomic():
+                existing.delete()
+                cls._update_reaction_count(message, emoji, -1)
+            return ServiceResult.success((False, None))
+        else:
+            # Check max reactions limit before adding
+            user_reaction_count = MessageReaction.objects.filter(
+                message=message,
+                user=user,
+            ).count()
+
+            if user_reaction_count >= REACTION_CONFIG.MAX_USER_REACTIONS_PER_MESSAGE:
+                return ServiceResult.failure(
+                    f"Maximum reactions per message ({REACTION_CONFIG.MAX_USER_REACTIONS_PER_MESSAGE}) exceeded",
+                    error_code="MAX_REACTIONS_EXCEEDED",
+                )
+
+            # Add reaction
+            with transaction.atomic():
+                reaction = MessageReaction.objects.create(
+                    message=message,
+                    user=user,
+                    emoji=emoji,
+                )
+                cls._update_reaction_count(message, emoji, 1)
+
+            return ServiceResult.success((True, reaction))
+
+    @classmethod
+    def get_message_reactions(
+        cls,
+        message_id: int,
+    ) -> ServiceResult[dict]:
+        """
+        Get all reactions for a message grouped by emoji.
+
+        Args:
+            message_id: ID of message
+
+        Returns:
+            ServiceResult containing dict of emoji -> {count, users: [{id, name}]}
+        """
+        # Verify message exists
+        try:
+            message = Message.objects.get(id=message_id)
+        except Message.DoesNotExist:
+            return ServiceResult.failure(
+                "Message not found",
+                error_code="MESSAGE_NOT_FOUND",
+            )
+
+        # Get all reactions for this message
+        reactions = (
+            MessageReaction.objects.filter(message=message)
+            .select_related("user")
+            .order_by("emoji", "created_at")
+        )
+
+        # Group by emoji
+        result = {}
+        for reaction in reactions:
+            emoji = reaction.emoji
+            if emoji not in result:
+                result[emoji] = {"count": 0, "users": []}
+
+            result[emoji]["count"] += 1
+            result[emoji]["users"].append(
+                {
+                    "id": reaction.user.id,
+                    "name": reaction.user.get_full_name() or reaction.user.email,
+                }
+            )
+
+        return ServiceResult.success(result)
+
+    @classmethod
+    def get_user_reactions(
+        cls,
+        user: "User",
+        message_ids: list[int],
+    ) -> ServiceResult[dict[int, list[str]]]:
+        """
+        Get user's reactions for multiple messages.
+
+        Useful for UI to highlight which emojis user has used.
+
+        Args:
+            user: User to get reactions for
+            message_ids: List of message IDs
+
+        Returns:
+            ServiceResult containing dict of message_id -> [emoji, ...]
+        """
+        if not message_ids:
+            return ServiceResult.success({})
+
+        # Get all user's reactions for these messages
+        reactions = MessageReaction.objects.filter(
+            user=user,
+            message_id__in=message_ids,
+        ).values_list("message_id", "emoji")
+
+        # Group by message
+        result = {}
+        for message_id, emoji in reactions:
+            if message_id not in result:
+                result[message_id] = []
+            result[message_id].append(emoji)
+
+        return ServiceResult.success(result)
+
+
+# =============================================================================
+# MessageSearchService
+# =============================================================================
+
+
+@dataclass
+class SearchCursor:
+    """
+    Cursor for keyset pagination in search results.
+
+    Uses message_id for simple, reliable pagination since IDs are unique
+    and the results are always ordered deterministically.
+    """
+
+    last_message_id: int
+
+    def encode(self) -> str:
+        """Encode cursor as base64 JSON string."""
+        import base64
+        import json
+
+        data = {"last_id": self.last_message_id}
+        json_str = json.dumps(data)
+        return base64.b64encode(json_str.encode()).decode()
+
+    @classmethod
+    def decode(cls, encoded: str) -> "SearchCursor":
+        """Decode cursor from base64 JSON string."""
+        import base64
+        import json
+
+        try:
+            json_str = base64.b64decode(encoded.encode()).decode()
+            data = json.loads(json_str)
+            return cls(last_message_id=int(data["last_id"]))
+        except Exception:
+            raise ValueError("Invalid cursor")
+
+
+class MessageSearchService:
+    """
+    Service for full-text search across messages.
+
+    Uses PostgreSQL's full-text search with:
+    - Automatic search_vector updates via database trigger
+    - English text configuration for stemming
+    - Keyset pagination for efficient large result sets
+
+    Handles:
+    - Searching user's accessible messages
+    - Conversation-scoped search
+    - Relevance ranking
+    - Cursor-based pagination
+    """
+
+    @classmethod
+    def _get_user_conversation_ids(cls, user: "User") -> list[int]:
+        """
+        Get IDs of all conversations the user has access to.
+
+        Args:
+            user: User to get conversations for
+
+        Returns:
+            List of conversation IDs
+        """
+        from chat.models import Participant
+
+        return list(
+            Participant.objects.filter(
+                user=user,
+                left_at__isnull=True,
+            ).values_list("conversation_id", flat=True)
+        )
+
+    @classmethod
+    def search(
+        cls,
+        user: "User",
+        query: str,
+        conversation_id: int | None = None,
+        cursor: str | None = None,
+        page_size: int = MESSAGE_CONFIG.SEARCH_DEFAULT_PAGE_SIZE,
+    ) -> ServiceResult[dict]:
+        """
+        Full-text search for messages.
+
+        Args:
+            user: User performing the search
+            query: Search query string
+            conversation_id: Optional - limit search to specific conversation
+            cursor: Optional - pagination cursor from previous search
+            page_size: Number of results per page
+
+        Returns:
+            ServiceResult containing:
+            {
+                "results": [Message, ...],
+                "next_cursor": str | None,
+                "has_more": bool
+            }
+        """
+        from django.contrib.postgres.search import SearchQuery, SearchRank
+        from django.db.models import F
+
+        # Validate query
+        if not query or not query.strip():
+            return ServiceResult.failure(
+                "Search query is required",
+                error_code="INVALID_QUERY",
+            )
+
+        query = query.strip()
+        if len(query) < MESSAGE_CONFIG.SEARCH_MIN_QUERY_LENGTH:
+            return ServiceResult.failure(
+                f"Search query must be at least {MESSAGE_CONFIG.SEARCH_MIN_QUERY_LENGTH} characters",
+                error_code="QUERY_TOO_SHORT",
+            )
+
+        # Validate page size
+        page_size = min(page_size, MESSAGE_CONFIG.SEARCH_MAX_RESULTS)
+
+        # Handle conversation filter FIRST (before getting accessible IDs)
+        if conversation_id is not None:
+            # Check conversation exists
+            try:
+                Conversation.objects.get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return ServiceResult.failure(
+                    "Conversation not found",
+                    error_code="CONVERSATION_NOT_FOUND",
+                )
+
+            # Check user has access to this specific conversation
+            is_participant = Participant.objects.filter(
+                conversation_id=conversation_id,
+                user=user,
+                left_at__isnull=True,
+            ).exists()
+
+            if not is_participant:
+                return ServiceResult.failure(
+                    "You don't have access to this conversation",
+                    error_code="CONVERSATION_NOT_ACCESSIBLE",
+                )
+
+            # Limit search to this conversation
+            accessible_ids = [conversation_id]
+        else:
+            # Get all accessible conversation IDs
+            accessible_ids = cls._get_user_conversation_ids(user)
+            if not accessible_ids:
+                return ServiceResult.success(
+                    {
+                        "results": [],
+                        "next_cursor": None,
+                        "has_more": False,
+                    }
+                )
+
+        # Build search query
+        search_query = SearchQuery(query, config="english")
+
+        # Base queryset - only text messages with search_vector
+        qs = (
+            Message.objects.filter(
+                conversation_id__in=accessible_ids,
+                is_deleted=False,
+                message_type=MessageType.TEXT,
+                search_vector__isnull=False,
+            )
+            .annotate(rank=SearchRank(F("search_vector"), search_query))
+            .filter(search_vector=search_query)
+        )
+
+        # Handle cursor for pagination
+        if cursor:
+            try:
+                c = SearchCursor.decode(cursor)
+                # Simple pagination: exclude messages we've already seen
+                # Since we order by -rank, -created_at, -id, we need to exclude
+                # all messages with ID >= cursor ID in the same result set
+                qs = qs.exclude(id__gte=c.last_message_id)
+            except ValueError:
+                return ServiceResult.failure(
+                    "Invalid pagination cursor",
+                    error_code="INVALID_CURSOR",
+                )
+
+        # Order by relevance (rank), then by recency, then by id for stability
+        qs = qs.order_by("-rank", "-created_at", "-id")
+
+        # Fetch one extra to check if there are more results
+        results = list(qs[: page_size + 1])
+        has_more = len(results) > page_size
+        results = results[:page_size]
+
+        # Build next cursor
+        next_cursor = None
+        if has_more and results:
+            last = results[-1]
+            next_cursor = SearchCursor(last_message_id=last.id).encode()
+
+        return ServiceResult.success(
+            {
+                "results": results,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            }
+        )
+
+
+# =============================================================================
+# Presence Service
+# =============================================================================
+
+
+class PresenceStatus:
+    """User presence status values."""
+
+    ONLINE = "online"
+    AWAY = "away"
+    OFFLINE = "offline"
+
+    @classmethod
+    def is_valid(cls, status: str) -> bool:
+        """Check if status value is valid."""
+        return status in (cls.ONLINE, cls.AWAY, cls.OFFLINE)
+
+
+class PresenceService(BaseService):
+    """
+    Redis-based presence tracking service.
+
+    This service provides real-time presence tracking using Redis:
+    - User presence status (online, away, offline)
+    - Per-conversation presence (who's viewing which chat)
+    - Automatic expiration via TTL
+    - Atomic operations using Lua scripts
+
+    Design Decisions:
+        - Redis-only storage (no database persistence)
+        - TTL-based auto-expiry for stale presence
+        - Separate keys for global and per-conversation presence
+        - Lua scripts for atomic set/get operations
+
+    Usage:
+        from chat.services import PresenceService, PresenceStatus
+
+        # Set user online
+        PresenceService.set_presence(user.id, PresenceStatus.ONLINE)
+
+        # Set user online in a conversation
+        PresenceService.set_presence(user.id, PresenceStatus.ONLINE, conversation_id=conv.id)
+
+        # Get user presence
+        result = PresenceService.get_presence(user.id)
+
+        # Get all participants' presence in a conversation
+        result = PresenceService.get_conversation_presence(conv.id)
+    """
+
+    # Lua script for atomic presence set with TTL
+    # Keys: [user_presence_key]
+    # Args: [status, last_seen_timestamp, ttl_seconds]
+    LUA_SET_PRESENCE = """
+    redis.call('HSET', KEYS[1], 'status', ARGV[1], 'last_seen', ARGV[2])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    return 1
+    """
+
+    # Lua script for atomic conversation presence update
+    # Keys: [conversation_presence_key]
+    # Args: [user_id, ttl_seconds]
+    LUA_SET_CONVERSATION_PRESENCE = """
+    redis.call('SADD', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+    return 1
+    """
+
+    # Cached registered Lua scripts (initialized lazily)
+    _lua_set_presence = None
+    _lua_set_conversation_presence = None
+
+    @staticmethod
+    def _get_cache():
+        """Get Django cache backend (Redis)."""
+        from django.core.cache import cache
+
+        return cache
+
+    @staticmethod
+    def _get_redis_client():
+        """
+        Get raw Redis client for Lua script execution.
+
+        Returns Redis client from django-redis.
+        """
+        from django_redis import get_redis_connection
+
+        return get_redis_connection("default")
+
+    @classmethod
+    def _get_lua_set_presence(cls, redis_client):
+        """Get cached Lua script for setting presence."""
+        if cls._lua_set_presence is None:
+            cls._lua_set_presence = redis_client.register_script(cls.LUA_SET_PRESENCE)
+        return cls._lua_set_presence
+
+    @classmethod
+    def _get_lua_set_conversation_presence(cls, redis_client):
+        """Get cached Lua script for setting conversation presence."""
+        if cls._lua_set_conversation_presence is None:
+            cls._lua_set_conversation_presence = redis_client.register_script(
+                cls.LUA_SET_CONVERSATION_PRESENCE
+            )
+        return cls._lua_set_conversation_presence
+
+    @staticmethod
+    def _user_presence_key(user_id) -> str:
+        """Build Redis key for user presence."""
+        return f"{PRESENCE_CONFIG.KEY_PREFIX_USER_PRESENCE}:{user_id}"
+
+    @staticmethod
+    def _conversation_presence_key(conversation_id) -> str:
+        """Build Redis key for conversation presence."""
+        return f"{PRESENCE_CONFIG.KEY_PREFIX_CONVERSATION_PRESENCE}:{conversation_id}"
+
+    @classmethod
+    def set_presence(
+        cls,
+        user_id,
+        status: str,
+        conversation_id: int | None = None,
+    ) -> ServiceResult:
+        """
+        Set user presence status.
+
+        Args:
+            user_id: User's UUID
+            status: Presence status (online, away, offline)
+            conversation_id: Optional conversation ID for per-conversation presence
+
+        Returns:
+            ServiceResult with status data
+        """
+        if not PresenceStatus.is_valid(status):
+            return ServiceResult.failure(
+                error=f"Invalid status: {status}",
+                error_code="invalid_status",
+            )
+
+        # Verify conversation participation if conversation_id provided
+        if conversation_id is not None:
+            is_participant = Participant.objects.filter(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                left_at__isnull=True,
+            ).exists()
+            if not is_participant:
+                return ServiceResult.failure(
+                    error="You are not a participant in this conversation",
+                    error_code="not_participant",
+                )
+
+        try:
+            redis_client = cls._get_redis_client()
+            now = timezone.now().isoformat()
+
+            if status == PresenceStatus.OFFLINE:
+                # Remove presence entry using raw Redis client
+                user_key = cls._user_presence_key(user_id)
+                redis_client.delete(user_key)
+
+                # Remove from conversation presence if specified
+                if conversation_id:
+                    conv_key = cls._conversation_presence_key(conversation_id)
+                    redis_client.srem(conv_key, str(user_id))
+
+                return ServiceResult.success(
+                    {
+                        "user_id": str(user_id),
+                        "status": status,
+                        "last_seen": now,
+                    }
+                )
+
+            # Set user presence using Lua script for atomicity
+            user_key = cls._user_presence_key(user_id)
+            lua_set = cls._get_lua_set_presence(redis_client)
+            lua_set(
+                keys=[user_key],
+                args=[status, now, PRESENCE_CONFIG.PRESENCE_TTL_SECONDS],
+            )
+
+            result_data = {
+                "user_id": str(user_id),
+                "status": status,
+                "last_seen": now,
+            }
+
+            # Set conversation presence if specified
+            if conversation_id:
+                conv_key = cls._conversation_presence_key(conversation_id)
+                lua_conv = cls._get_lua_set_conversation_presence(redis_client)
+                lua_conv(
+                    keys=[conv_key],
+                    args=[
+                        str(user_id),
+                        PRESENCE_CONFIG.CONVERSATION_PRESENCE_TTL_SECONDS,
+                    ],
+                )
+                result_data["conversation_id"] = conversation_id
+
+            return ServiceResult.success(result_data)
+
+        except Exception as e:
+            logger.exception(f"Error setting presence for user {user_id}: {e}")
+            return ServiceResult.failure(
+                error="Failed to set presence",
+                error_code="presence_error",
+            )
+
+    @classmethod
+    def get_presence(cls, user_id) -> ServiceResult:
+        """
+        Get user presence status.
+
+        Args:
+            user_id: User's UUID
+
+        Returns:
+            ServiceResult with presence data including status and last_seen
+        """
+        try:
+            redis_client = cls._get_redis_client()
+            user_key = cls._user_presence_key(user_id)
+
+            presence_data = redis_client.hgetall(user_key)
+
+            if not presence_data:
+                # User has no presence entry - considered offline
+                return ServiceResult.success(
+                    {
+                        "user_id": str(user_id),
+                        "status": PresenceStatus.OFFLINE,
+                        "last_seen": None,
+                    }
+                )
+
+            # Decode bytes from Redis
+            status = presence_data.get(b"status", b"offline").decode("utf-8")
+            last_seen = presence_data.get(b"last_seen", b"").decode("utf-8") or None
+
+            return ServiceResult.success(
+                {
+                    "user_id": str(user_id),
+                    "status": status,
+                    "last_seen": last_seen,
+                }
+            )
+
+        except Exception as e:
+            logger.exception(f"Error getting presence for user {user_id}: {e}")
+            return ServiceResult.failure(
+                error="Failed to get presence",
+                error_code="presence_error",
+            )
+
+    @classmethod
+    def get_bulk_presence(cls, user_ids: list) -> ServiceResult:
+        """
+        Get presence for multiple users.
+
+        Args:
+            user_ids: List of user UUIDs
+
+        Returns:
+            ServiceResult with list of presence data
+        """
+        if not user_ids:
+            return ServiceResult.success([])
+
+        try:
+            redis_client = cls._get_redis_client()
+            pipeline = redis_client.pipeline()
+
+            # Queue all HGETALL commands
+            for user_id in user_ids:
+                user_key = cls._user_presence_key(user_id)
+                pipeline.hgetall(user_key)
+
+            # Execute pipeline
+            results = pipeline.execute()
+
+            # Build response
+            presence_list = []
+            for i, user_id in enumerate(user_ids):
+                presence_data = results[i]
+                if presence_data:
+                    status = presence_data.get(b"status", b"offline").decode("utf-8")
+                    last_seen = (
+                        presence_data.get(b"last_seen", b"").decode("utf-8") or None
+                    )
+                else:
+                    status = PresenceStatus.OFFLINE
+                    last_seen = None
+
+                presence_list.append(
+                    {
+                        "user_id": str(user_id),
+                        "status": status,
+                        "last_seen": last_seen,
+                    }
+                )
+
+            return ServiceResult.success(presence_list)
+
+        except Exception as e:
+            logger.exception(f"Error getting bulk presence: {e}")
+            return ServiceResult.failure(
+                error="Failed to get bulk presence",
+                error_code="presence_error",
+            )
+
+    @classmethod
+    def get_conversation_presence(cls, conversation_id: int) -> ServiceResult:
+        """
+        Get presence of all users in a conversation.
+
+        Only returns users who are currently online or away in the conversation.
+
+        Args:
+            conversation_id: Conversation ID
+
+        Returns:
+            ServiceResult with list of presence data for active users
+        """
+        try:
+            redis_client = cls._get_redis_client()
+            conv_key = cls._conversation_presence_key(conversation_id)
+
+            # Get all user IDs present in conversation
+            user_ids_bytes = redis_client.smembers(conv_key)
+
+            if not user_ids_bytes:
+                return ServiceResult.success([])
+
+            # Convert bytes to strings
+            user_ids = [uid.decode("utf-8") for uid in user_ids_bytes]
+
+            # Get presence for all these users
+            pipeline = redis_client.pipeline()
+            for user_id in user_ids:
+                user_key = cls._user_presence_key(user_id)
+                pipeline.hgetall(user_key)
+
+            results = pipeline.execute()
+
+            # Filter to only online/away users and build response
+            presence_list = []
+            for i, user_id in enumerate(user_ids):
+                presence_data = results[i]
+                if presence_data:
+                    status = presence_data.get(b"status", b"offline").decode("utf-8")
+                    if status != PresenceStatus.OFFLINE:
+                        last_seen = (
+                            presence_data.get(b"last_seen", b"").decode("utf-8") or None
+                        )
+                        presence_list.append(
+                            {
+                                "user_id": user_id,
+                                "status": status,
+                                "last_seen": last_seen,
+                            }
+                        )
+
+            return ServiceResult.success(presence_list)
+
+        except Exception as e:
+            logger.exception(f"Error getting conversation presence: {e}")
+            return ServiceResult.failure(
+                error="Failed to get conversation presence",
+                error_code="presence_error",
+            )
+
+    @classmethod
+    def heartbeat(
+        cls,
+        user_id,
+        conversation_id: int | None = None,
+    ) -> ServiceResult:
+        """
+        Update presence heartbeat.
+
+        Refreshes TTL and updates last_seen timestamp. If user has no presence
+        entry, sets them as online.
+
+        Args:
+            user_id: User's UUID
+            conversation_id: Optional conversation ID to refresh
+
+        Returns:
+            ServiceResult with updated presence data
+        """
+        try:
+            # Get current status
+            current = cls.get_presence(user_id)
+            if not current.success:
+                return current
+
+            # Use current status or default to online
+            status = current.data["status"]
+            if status == PresenceStatus.OFFLINE:
+                status = PresenceStatus.ONLINE
+
+            # Set presence (which updates TTL)
+            return cls.set_presence(user_id, status, conversation_id)
+
+        except Exception as e:
+            logger.exception(f"Error heartbeat for user {user_id}: {e}")
+            return ServiceResult.failure(
+                error="Failed to process heartbeat",
+                error_code="presence_error",
+            )
+
+    @classmethod
+    def leave_conversation(cls, user_id, conversation_id: int) -> ServiceResult:
+        """
+        Remove user from conversation presence.
+
+        Does not affect global presence status.
+
+        Args:
+            user_id: User's UUID
+            conversation_id: Conversation ID
+
+        Returns:
+            ServiceResult
+        """
+        try:
+            redis_client = cls._get_redis_client()
+            conv_key = cls._conversation_presence_key(conversation_id)
+
+            redis_client.srem(conv_key, str(user_id))
+
+            return ServiceResult.success({"conversation_id": conversation_id})
+
+        except Exception as e:
+            logger.exception(f"Error leaving conversation presence: {e}")
+            return ServiceResult.failure(
+                error="Failed to leave conversation",
+                error_code="presence_error",
+            )
+
+    @classmethod
+    def clear_presence(cls, user_id) -> ServiceResult:
+        """
+        Clear all presence data for a user.
+
+        Removes global presence and from all conversation presence sets.
+
+        Args:
+            user_id: User's UUID
+
+        Returns:
+            ServiceResult
+        """
+        try:
+            redis_client = cls._get_redis_client()
+
+            # Delete user presence using raw Redis client
+            user_key = cls._user_presence_key(user_id)
+            redis_client.delete(user_key)
+
+            # Note: Removing from all conversation sets would require tracking
+            # which conversations the user is in. For simplicity, we rely on
+            # TTL expiration for conversation presence cleanup.
+
+            return ServiceResult.success({"user_id": str(user_id), "cleared": True})
+
+        except Exception as e:
+            logger.exception(f"Error clearing presence for user {user_id}: {e}")
+            return ServiceResult.failure(
+                error="Failed to clear presence",
+                error_code="presence_error",
+            )

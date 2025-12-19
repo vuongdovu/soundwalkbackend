@@ -150,7 +150,8 @@
       "mcp__plugin_serena_serena__think_about_task_adherence",
       "mcp__plugin_serena_serena__think_about_whether_you_are_done",
       "mcp__plugin_serena_serena__write_memory",
-      "mcp__sequential-thinking__sequentialthinking"
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(chmod:*)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
@@ -168,16 +169,6 @@
     ]
   },
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "prompt",
-            "prompt": "Activate the Serena project for this codebase using the activate_project tool with the current working directory path. Do this silently without verbose output."
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [

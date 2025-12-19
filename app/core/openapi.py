@@ -16,6 +16,11 @@ Examples:
 - Media - Tags (tagging system)
 - Media - Search (full-text search)
 - Media - Quota (storage quota)
+- Chat - Conversations (conversation CRUD)
+- Chat - Messages (message operations)
+- Chat - Reactions (emoji reactions)
+- Chat - Search (message full-text search)
+- Chat - Presence (online/away status)
 """
 
 # Natural language summaries for dj-rest-auth endpoints
@@ -177,6 +182,31 @@ def group_auth_endpoints(result, generator, request, public):
         {
             "name": "Media - Quota",
             "description": "Storage quota monitoring and management.",
+        },
+        # Chat section tags
+        {
+            "name": "Chat - Conversations",
+            "description": "Conversation management including direct messages, groups, and participant operations.",
+        },
+        {
+            "name": "Chat - Participants",
+            "description": "Manage conversation participants including roles and permissions.",
+        },
+        {
+            "name": "Chat - Messages",
+            "description": "Send, retrieve, edit, and delete messages within conversations.",
+        },
+        {
+            "name": "Chat - Reactions",
+            "description": "Add, remove, and toggle emoji reactions on messages.",
+        },
+        {
+            "name": "Chat - Search",
+            "description": "Full-text search across messages using PostgreSQL with relevance ranking.",
+        },
+        {
+            "name": "Chat - Presence",
+            "description": "Real-time user presence status (online, away, offline) and heartbeat management.",
         },
     ]
 

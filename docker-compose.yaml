@@ -41,7 +41,7 @@ services:
       - static_volume:/app/staticfiles
       - media_volume:/app/uploads
       # Persistent logs directory - survives container restarts
-      - ./logs:/app/logs
+      - ./logs:/logs
     depends_on:
       db:
         condition: service_healthy
@@ -166,7 +166,7 @@ services:
       # Media files - shared with web container for processing uploaded files
       - media_volume:/app/uploads
       # Persistent logs directory - survives container restarts
-      - ./logs:/app/logs
+      - ./logs:/logs
     depends_on:
       db:
         condition: service_healthy
@@ -206,7 +206,7 @@ services:
     volumes:
       - ./app:/app
       # Persistent logs directory - survives container restarts
-      - ./logs:/app/logs
+      - ./logs:/logs
     depends_on:
       db:
         condition: service_healthy

@@ -25,6 +25,8 @@ import json
 from typing import TYPE_CHECKING
 
 from django.conf import settings
+from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVectorField
 from django.db import models
 from django.db.models import F, Q
 
@@ -545,6 +547,46 @@ class Message(SoftDeleteMixin, BaseModel):
         help_text="Number of replies to this message (cached for performance)",
     )
 
+    # Edit tracking fields
+    edited_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when message was last edited",
+    )
+
+    edit_count = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Number of times this message has been edited",
+    )
+
+    original_content = models.TextField(
+        blank=True,
+        default="",
+        help_text="Original content before any edits (empty if never edited)",
+    )
+
+    # Full-text search
+    search_vector = SearchVectorField(
+        null=True,
+        blank=True,
+        help_text="PostgreSQL full-text search vector for message content",
+    )
+
+    # Reaction counts cache
+    reaction_counts = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Cached count of reactions by emoji (e.g., {'👍': 3, '❤️': 5})",
+    )
+
+    # Attachments (M2M to MediaFile)
+    attachments = models.ManyToManyField(
+        "media.MediaFile",
+        blank=True,
+        related_name="chat_messages",
+        help_text="Media files attached to this message",
+    )
+
     class Meta:
         db_table = "chat_message"
         ordering = ["created_at", "id"]
@@ -569,6 +611,11 @@ class Message(SoftDeleteMixin, BaseModel):
             models.Index(
                 fields=["conversation", "message_type"],
                 name="chat_msg_conv_type_idx",
+            ),
+            # Full-text search index on search_vector
+            GinIndex(
+                fields=["search_vector"],
+                name="chat_msg_search_vector_idx",
             ),
         ]
 
@@ -596,6 +643,11 @@ class Message(SoftDeleteMixin, BaseModel):
         """Check if this message is a reply to another message."""
         return self.parent_message_id is not None
 
+    @property
+    def is_edited(self) -> bool:
+        """Check if this message has been edited."""
+        return self.edit_count > 0
+
     def get_system_event_data(self) -> dict | None:
         """
         Parse system message content as JSON.
@@ -621,3 +673,134 @@ class Message(SoftDeleteMixin, BaseModel):
         if self.is_deleted:
             return "[Message deleted]"
         return self.content
+
+
+class MessageReaction(BaseModel):
+    """
+    Represents a user's reaction to a message.
+
+    Each user can react once per emoji per message. Multiple different emoji
+    reactions from the same user are allowed.
+
+    Design:
+        - Reactions are stored individually for auditability
+        - Aggregated counts are cached in Message.reaction_counts for performance
+        - On add/remove, the service layer updates both this model and the cache
+
+    Fields:
+        message: Message this reaction belongs to
+        user: User who added this reaction
+        emoji: The emoji character(s) used (supports composite emojis)
+        created_at: When the reaction was added
+
+    Constraints:
+        - UniqueConstraint on (message, user, emoji) - one reaction per combo
+    """
+
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name="reactions",
+        help_text="Message this reaction belongs to",
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="message_reactions",
+        help_text="User who added this reaction",
+    )
+
+    emoji = models.CharField(
+        max_length=8,
+        help_text="Emoji character(s) used for this reaction",
+    )
+
+    class Meta:
+        db_table = "chat_message_reaction"
+        ordering = ["-created_at"]
+        indexes = [
+            # Query reactions by message and emoji (for aggregation)
+            models.Index(
+                fields=["message", "emoji"],
+                name="chat_reaction_msg_emoji_idx",
+            ),
+            # Query a user's recent reactions
+            models.Index(
+                fields=["user", "-created_at"],
+                name="chat_reaction_user_recent_idx",
+            ),
+        ]
+        constraints = [
+            # One reaction per user per emoji per message
+            models.UniqueConstraint(
+                fields=["message", "user", "emoji"],
+                name="unique_user_message_emoji_reaction",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Return human-readable representation."""
+        return f"{self.user_id} reacted {self.emoji} to message {self.message_id}"
+
+
+class MessageEditHistory(BaseModel):
+    """
+    Stores the history of edits to a message.
+
+    This model provides a full audit trail of message edits, allowing users
+    to see all previous versions of an edited message.
+
+    Note:
+        This is complementary to Message.edit_count and Message.original_content.
+        Those fields provide quick "was edited?" checks while this model provides
+        the complete history.
+
+    Fields:
+        message: Message this edit belongs to
+        content: The message content at this version
+        edit_number: Sequential edit number (1 = first edit, etc.)
+        created_at: When this edit was made
+
+    Constraints:
+        - UniqueConstraint on (message, edit_number) - one entry per edit
+    """
+
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name="edit_history",
+        help_text="Message this edit belongs to",
+    )
+
+    content = models.TextField(
+        help_text="Message content at this edit version",
+    )
+
+    edit_number = models.PositiveSmallIntegerField(
+        help_text="Sequential edit number (1 = first edit, 2 = second, etc.)",
+    )
+
+    class Meta:
+        db_table = "chat_message_edit_history"
+        ordering = ["-created_at"]
+        verbose_name = "Message Edit History"
+        verbose_name_plural = "Message Edit Histories"
+        indexes = [
+            # Query edit history by message (most recent first)
+            models.Index(
+                fields=["message", "-created_at"],
+                name="chat_edit_hist_msg_recent_idx",
+            ),
+        ]
+        constraints = [
+            # One entry per edit number per message
+            models.UniqueConstraint(
+                fields=["message", "edit_number"],
+                name="unique_message_edit_number",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        """Return human-readable representation."""
+        return f"Edit #{self.edit_number} of message {self.message_id}"

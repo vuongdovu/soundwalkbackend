@@ -532,7 +532,7 @@ LOG_LEVEL = env("LOG_LEVEL")
 # Log file name determined by service (web, celery-worker, celery-beat)
 # Set via LOG_FILE_NAME environment variable in docker-compose.yaml
 LOG_FILE_NAME = env("LOG_FILE_NAME", default="django.log")
-LOG_DIR = BASE_DIR / "logs"
+LOG_DIR = BASE_DIR.parent / "logs"
 
 # Ensure log directory exists (handles local development without Docker)
 LOG_DIR.mkdir(parents=True, exist_ok=True)

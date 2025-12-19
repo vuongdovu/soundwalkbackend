@@ -29,10 +29,21 @@ URL Structure:
         conversations/{id}/read/   - Mark conversation as read
         conversations/{id}/leave/  - Leave conversation
         conversations/{id}/transfer-ownership/ - Transfer group ownership
+        conversations/{id}/presence/ - Get participant presence
         conversations/{id}/participants/ - Participant list/add
         conversations/{id}/participants/{pk}/ - Participant update/remove
         conversations/{id}/messages/ - Message list/send
-        conversations/{id}/messages/{pk}/ - Message delete
+        conversations/{id}/messages/{pk}/ - Message retrieve/delete
+        conversations/{id}/messages/{pk}/edit/ - Edit message
+        conversations/{id}/messages/{pk}/history/ - Get edit history
+        conversations/{id}/messages/{pk}/reactions/ - List/add reactions
+        conversations/{id}/messages/{pk}/reactions/{emoji}/ - Remove reaction
+        conversations/{id}/messages/{pk}/reactions/toggle/ - Toggle reaction
+        messages/search/           - Full-text message search
+        presence/                  - Set presence status
+        presence/bulk/             - Get bulk presence
+        presence/heartbeat/        - Send presence heartbeat
+        presence/{user_id}/        - Get user presence
     /api/v1/payments/              - Payment endpoints
         webhooks/stripe/           - Stripe webhook endpoint (POST)
     /api/v1/media/                 - Media endpoints

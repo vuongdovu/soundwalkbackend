@@ -27,12 +27,17 @@ Design Decisions:
 
 from __future__ import annotations
 
+from urllib.parse import unquote
+
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from chat.models import Conversation, ConversationType, Message, Participant
 from chat.pagination import ConversationCursorPagination, MessageCursorPagination
@@ -45,20 +50,32 @@ from chat.permissions import (
     IsGroupConversation,
 )
 from chat.serializers import (
+    BulkPresenceRequestSerializer,
     ConversationCreateSerializer,
     ConversationDetailSerializer,
     ConversationListSerializer,
     ConversationUpdateSerializer,
     MessageCreateSerializer,
+    MessageEditHistorySerializer,
+    MessageEditSerializer,
+    MessageSearchResultSerializer,
     MessageSerializer,
     ParticipantCreateSerializer,
     ParticipantSerializer,
     ParticipantUpdateSerializer,
+    PresenceSerializer,
+    PresenceSetSerializer,
+    ReactionCreateSerializer,
+    ReactionSerializer,
+    ReactionToggleResponseSerializer,
 )
 from chat.services import (
     ConversationService,
+    MessageSearchService,
     MessageService,
     ParticipantService,
+    PresenceService,
+    ReactionService,
 )
 
 User = get_user_model()
@@ -303,6 +320,45 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
 
         return Response({"status": "transferred"})
+
+    @extend_schema(
+        operation_id="get_conversation_presence",
+        summary="Get conversation presence",
+        description=(
+            "Get the presence status of all participants in this conversation. "
+            "Returns a list of online/away users. Useful for showing who is "
+            "currently active in a conversation."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=PresenceSerializer(many=True),
+                description="List of presence statuses for conversation participants",
+            ),
+            403: OpenApiResponse(description="Not a participant in this conversation"),
+            404: OpenApiResponse(description="Conversation not found"),
+        },
+        tags=["Chat - Presence"],
+    )
+    @action(detail=True, methods=["get"], url_path="presence")
+    def presence(self, request, pk=None):
+        """
+        Get presence status of all participants in this conversation.
+
+        Returns list of online/away users currently viewing this conversation.
+        Only active participants can view conversation presence.
+        """
+        conversation = self.get_object()
+
+        # Check if user is a participant (already done by permission class)
+        result = PresenceService.get_conversation_presence(conversation.id)
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(PresenceSerializer(result.data, many=True).data)
 
 
 class ParticipantViewSet(viewsets.ModelViewSet):
@@ -613,3 +669,635 @@ class MessageViewSet(viewsets.ModelViewSet):
             )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        operation_id="edit_message",
+        summary="Edit message",
+        description=(
+            "Edit the content of a message you sent. Edits are allowed within a "
+            "configurable time window (default: 15 minutes). The original content is "
+            "preserved in edit history and the message is marked as edited."
+        ),
+        request=MessageEditSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=MessageSerializer,
+                description="Message edited successfully with updated content and edit metadata",
+            ),
+            400: OpenApiResponse(
+                description="Edit not allowed (time window expired, empty content, or content unchanged)",
+            ),
+            403: OpenApiResponse(
+                description="Cannot edit messages from other users",
+            ),
+            404: OpenApiResponse(description="Message not found"),
+        },
+        tags=["Chat - Messages"],
+    )
+    @action(detail=True, methods=["patch"])
+    def edit(self, request, conversation_pk=None, pk=None):
+        """
+        Edit a message within the allowed time window.
+
+        PATCH /api/v1/chat/conversations/{conversation_id}/messages/{id}/edit/
+        """
+        message = self.get_object()
+
+        serializer = MessageEditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = MessageService.edit_message(
+            user=request.user,
+            message_id=message.id,
+            new_content=serializer.validated_data["content"],
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        output_serializer = MessageSerializer(result.data)
+        return Response(output_serializer.data)
+
+    @extend_schema(
+        operation_id="get_message_edit_history",
+        summary="Get message edit history",
+        description=(
+            "Retrieve the complete edit history for a message. Returns all previous "
+            "versions of the message content, ordered by edit number. Only participants "
+            "in the conversation can view edit history."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=MessageEditHistorySerializer(many=True),
+                description="List of edit history entries with previous content and timestamps",
+            ),
+            403: OpenApiResponse(
+                description="Not a participant in this conversation",
+            ),
+            404: OpenApiResponse(description="Message not found"),
+        },
+        tags=["Chat - Messages"],
+    )
+    @action(detail=True, methods=["get"])
+    def history(self, request, conversation_pk=None, pk=None):
+        """
+        Get edit history for a message.
+
+        GET /api/v1/chat/conversations/{conversation_id}/messages/{id}/history/
+        """
+        message = self.get_object()
+
+        result = MessageService.get_edit_history(
+            user=request.user,
+            message_id=message.id,
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = MessageEditHistorySerializer(result.data, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        methods=["GET"],
+        operation_id="list_message_reactions",
+        summary="List message reactions",
+        description=(
+            "Get all reactions on a message grouped by emoji. Returns the count "
+            "of each emoji and the list of users who reacted with it."
+        ),
+        responses={
+            200: OpenApiResponse(
+                description="Reaction counts by emoji with user lists",
+            ),
+            403: OpenApiResponse(description="Not a participant in this conversation"),
+            404: OpenApiResponse(description="Message not found"),
+        },
+        tags=["Chat - Reactions"],
+    )
+    @extend_schema(
+        methods=["POST"],
+        operation_id="add_reaction",
+        summary="Add reaction to message",
+        description=(
+            "Add an emoji reaction to a message. Each user can only add one "
+            "reaction per emoji per message. Use toggle endpoint for add/remove behavior."
+        ),
+        request=ReactionCreateSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=ReactionSerializer,
+                description="Reaction added successfully",
+            ),
+            400: OpenApiResponse(
+                description="Invalid emoji or reaction already exists"
+            ),
+            403: OpenApiResponse(description="Not a participant in this conversation"),
+            404: OpenApiResponse(description="Message not found"),
+        },
+        tags=["Chat - Reactions"],
+    )
+    @action(detail=True, methods=["get", "post"], url_path="reactions")
+    def reactions(self, request, conversation_pk=None, pk=None):
+        """
+        Get or add reactions to a message.
+
+        GET /api/v1/chat/conversations/{conversation_id}/messages/{id}/reactions/
+        POST /api/v1/chat/conversations/{conversation_id}/messages/{id}/reactions/
+        """
+        message = self.get_object()
+
+        if request.method == "GET":
+            result = ReactionService.get_message_reactions(message_id=message.id)
+
+            if not result.success:
+                return Response(
+                    {"error": result.error, "error_code": result.error_code},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            return Response(result.data)
+
+        # POST - add reaction
+        serializer = ReactionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = ReactionService.add_reaction(
+            user=request.user,
+            message_id=message.id,
+            emoji=serializer.validated_data["emoji"],
+        )
+
+        if not result.success:
+            if result.error_code == "NOT_PARTICIPANT":
+                return Response(
+                    {"error": result.error, "error_code": result.error_code},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        output_serializer = ReactionSerializer(result.data)
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        operation_id="remove_reaction",
+        summary="Remove reaction from message",
+        description=(
+            "Remove your emoji reaction from a message. Only the user who added "
+            "the reaction can remove it. The emoji must be URL-encoded if it contains "
+            "special characters."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="emoji",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                description="The emoji to remove (URL-encoded)",
+            ),
+        ],
+        responses={
+            204: OpenApiResponse(description="Reaction removed successfully"),
+            403: OpenApiResponse(description="Not a participant in this conversation"),
+            404: OpenApiResponse(description="Message or reaction not found"),
+        },
+        tags=["Chat - Reactions"],
+    )
+    @action(detail=True, methods=["delete"], url_path="reactions/(?P<emoji>[^/.]+)")
+    def remove_reaction(self, request, conversation_pk=None, pk=None, emoji=None):
+        """
+        Remove a reaction from a message.
+
+        DELETE /api/v1/chat/conversations/{conversation_id}/messages/{id}/reactions/{emoji}/
+        """
+        message = self.get_object()
+
+        # URL decode the emoji
+        emoji = unquote(emoji)
+
+        result = ReactionService.remove_reaction(
+            user=request.user,
+            message_id=message.id,
+            emoji=emoji,
+        )
+
+        if not result.success:
+            if result.error_code == "NOT_PARTICIPANT":
+                return Response(
+                    {"error": result.error, "error_code": result.error_code},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if result.error_code == "REACTION_NOT_FOUND":
+                return Response(
+                    {"error": result.error, "error_code": result.error_code},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        operation_id="toggle_reaction",
+        summary="Toggle reaction on message",
+        description=(
+            "Toggle an emoji reaction on a message. If the reaction exists, it will be "
+            "removed; if it doesn't exist, it will be added. This is the recommended "
+            "endpoint for implementing reaction buttons in the UI."
+        ),
+        request=ReactionCreateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=ReactionToggleResponseSerializer,
+                description="Toggle result with added flag and reaction data",
+            ),
+            403: OpenApiResponse(description="Not a participant in this conversation"),
+            404: OpenApiResponse(description="Message not found"),
+        },
+        tags=["Chat - Reactions"],
+    )
+    @action(detail=True, methods=["post"], url_path="reactions/toggle")
+    def toggle_reaction(self, request, conversation_pk=None, pk=None):
+        """
+        Toggle a reaction on a message.
+
+        POST /api/v1/chat/conversations/{conversation_id}/messages/{id}/reactions/toggle/
+        """
+        message = self.get_object()
+
+        serializer = ReactionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = ReactionService.toggle_reaction(
+            user=request.user,
+            message_id=message.id,
+            emoji=serializer.validated_data["emoji"],
+        )
+
+        if not result.success:
+            if result.error_code == "NOT_PARTICIPANT":
+                return Response(
+                    {"error": result.error, "error_code": result.error_code},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        added, reaction = result.data
+        response_data = {
+            "added": added,
+            "reaction": ReactionSerializer(reaction).data if reaction else None,
+        }
+        return Response(response_data)
+
+
+# =============================================================================
+# Message Search
+# =============================================================================
+
+
+class MessageSearchView(APIView):
+    """
+    Search messages across user's conversations.
+
+    GET /api/v1/chat/messages/search/?q=query&conversation_id=X&cursor=Y&page_size=Z
+
+    Query parameters:
+        q: Search query (required, min 2 characters)
+        conversation_id: Optional - limit search to specific conversation
+        cursor: Optional - pagination cursor from previous search
+        page_size: Optional - number of results per page (default 20, max 100)
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="search_messages",
+        summary="Search messages",
+        description=(
+            "Full-text search across all messages in conversations where the user is a "
+            "participant. Uses PostgreSQL full-text search with relevance ranking. "
+            "Results can be filtered to a specific conversation and are paginated using cursors."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="q",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Search query (required, minimum 2 characters)",
+                required=True,
+            ),
+            OpenApiParameter(
+                name="conversation_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Limit search to a specific conversation",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="cursor",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Pagination cursor from previous search results",
+                required=False,
+            ),
+            OpenApiParameter(
+                name="page_size",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Number of results per page (default 20, max 100)",
+                required=False,
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="Search results with messages, next cursor, and has_more flag",
+            ),
+            400: OpenApiResponse(
+                description="Invalid query (missing, too short, or invalid conversation_id)",
+            ),
+        },
+        tags=["Chat - Search"],
+    )
+    def get(self, request):
+        """Search for messages."""
+        query = request.query_params.get("q")
+        conversation_id = request.query_params.get("conversation_id")
+        cursor = request.query_params.get("cursor")
+        page_size = request.query_params.get("page_size", 20)
+
+        # Validate query parameter
+        if not query:
+            return Response(
+                {"error": "Query parameter 'q' is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Convert conversation_id to int if provided
+        if conversation_id:
+            try:
+                conversation_id = int(conversation_id)
+            except ValueError:
+                return Response(
+                    {"error": "conversation_id must be an integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Convert page_size to int
+        try:
+            page_size = int(page_size)
+        except ValueError:
+            page_size = 20
+
+        # Perform search
+        result = MessageSearchService.search(
+            user=request.user,
+            query=query,
+            conversation_id=conversation_id,
+            cursor=cursor,
+            page_size=page_size,
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Serialize results
+        serialized_results = MessageSearchResultSerializer(
+            result.data["results"], many=True
+        ).data
+
+        return Response(
+            {
+                "results": serialized_results,
+                "next_cursor": result.data["next_cursor"],
+                "has_more": result.data["has_more"],
+            }
+        )
+
+
+# =============================================================================
+# Presence Views
+# =============================================================================
+
+
+class PresenceView(APIView):
+    """
+    Manage current user's presence.
+
+    POST /api/v1/chat/presence/
+        Set user presence status.
+
+    Payload:
+        status: "online" | "away" | "offline"
+        conversation_id: Optional - specific conversation context
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="set_presence",
+        summary="Set presence status",
+        description=(
+            "Set the current user's presence status. Status is stored in Redis with "
+            "automatic expiration. Optionally specify a conversation ID to indicate "
+            "which conversation the user is currently viewing."
+        ),
+        request=PresenceSetSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=PresenceSerializer,
+                description="Presence status updated successfully",
+            ),
+            400: OpenApiResponse(description="Invalid status value"),
+        },
+        tags=["Chat - Presence"],
+    )
+    def post(self, request):
+        """Set current user's presence status."""
+        serializer = PresenceSetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = PresenceService.set_presence(
+            user_id=request.user.id,
+            status=serializer.validated_data["status"],
+            conversation_id=serializer.validated_data.get("conversation_id"),
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(PresenceSerializer(result.data).data)
+
+
+class UserPresenceView(APIView):
+    """
+    Get presence status for a specific user.
+
+    GET /api/v1/chat/presence/{user_id}/
+        Get user's presence status.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="get_user_presence",
+        summary="Get user presence",
+        description=(
+            "Get the presence status for a specific user. Returns current status "
+            "(online, away, offline) and last seen timestamp. Useful for showing "
+            "online indicators in user lists."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="user_id",
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.PATH,
+                description="UUID of the user to query",
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(
+                response=PresenceSerializer,
+                description="User's presence status",
+            ),
+        },
+        tags=["Chat - Presence"],
+    )
+    def get(self, request, user_id):
+        """Get presence for a specific user."""
+        result = PresenceService.get_presence(user_id)
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(PresenceSerializer(result.data).data)
+
+
+class BulkPresenceView(APIView):
+    """
+    Get presence status for multiple users.
+
+    POST /api/v1/chat/presence/bulk/
+        Get presence for multiple users.
+
+    Payload:
+        user_ids: List of user IDs to query
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="get_bulk_presence",
+        summary="Get presence for multiple users",
+        description=(
+            "Get presence status for multiple users in a single request. Useful for "
+            "populating online indicators when loading a conversation participant list. "
+            "Limited to 100 user IDs per request."
+        ),
+        request=BulkPresenceRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=PresenceSerializer(many=True),
+                description="List of presence statuses for requested users",
+            ),
+            400: OpenApiResponse(
+                description="Invalid user IDs or too many IDs requested"
+            ),
+        },
+        tags=["Chat - Presence"],
+    )
+    def post(self, request):
+        """Get bulk presence for multiple users."""
+        serializer = BulkPresenceRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        result = PresenceService.get_bulk_presence(
+            serializer.validated_data["user_ids"]
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(PresenceSerializer(result.data, many=True).data)
+
+
+class HeartbeatView(APIView):
+    """
+    Send heartbeat to keep presence alive.
+
+    POST /api/v1/chat/presence/heartbeat/
+        Update last_seen and extend TTL.
+
+    Payload (optional):
+        conversation_id: Specific conversation context
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        operation_id="send_heartbeat",
+        summary="Send presence heartbeat",
+        description=(
+            "Send a heartbeat to keep the user's presence status alive. Should be called "
+            "periodically (every 30-60 seconds) while the user has the app open. Extends "
+            "the TTL on the presence record and updates last_seen timestamp."
+        ),
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "conversation_id": {
+                        "type": "integer",
+                        "description": "Optional conversation the user is currently viewing",
+                    },
+                },
+            }
+        },
+        responses={
+            200: OpenApiResponse(
+                response=PresenceSerializer,
+                description="Heartbeat processed, presence TTL extended",
+            ),
+        },
+        tags=["Chat - Presence"],
+    )
+    def post(self, request):
+        """Process heartbeat for current user."""
+        conversation_id = request.data.get("conversation_id")
+
+        result = PresenceService.heartbeat(
+            user_id=request.user.id,
+            conversation_id=conversation_id,
+        )
+
+        if not result.success:
+            return Response(
+                {"error": result.error, "error_code": result.error_code},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(PresenceSerializer(result.data).data)
