@@ -588,9 +588,19 @@ LOGGING = {
             "level": "ERROR",
             "propagate": False,
         },
+        "django.db.backends": {
+            "handlers": ["console", "file"],
+            "level": "WARNING",
+            "propagate": False,
+        },
         "celery": {
             "handlers": ["console", "file"],
             "level": LOG_LEVEL,
+            "propagate": False,
+        },
+        "silk": {
+            "handlers": ["console", "file"],
+            "level": "WARNING",
             "propagate": False,
         },
     },

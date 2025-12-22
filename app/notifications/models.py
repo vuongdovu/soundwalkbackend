@@ -4,6 +4,10 @@ Notification system models.
 This module defines the core models for the notification system:
 - NotificationType: Configuration for notification types with templates
 - Notification: Individual notifications sent to users
+- UserGlobalPreference: Global notification mute setting per user
+- UserCategoryPreference: Category-level notification preferences
+- UserNotificationPreference: Type-level notification preferences
+- NotificationDelivery: Per-channel delivery tracking
 
 Design Decisions:
     - NotificationType uses integer PK (internal lookup table)
@@ -11,6 +15,8 @@ Design Decisions:
     - Actor uses SET_NULL (preserve notification when actor deleted)
     - NotificationType uses PROTECT (prevent deletion with existing notifications)
     - GenericForeignKey for linking to any source object
+    - Preference hierarchy: Global -> Category -> Type -> Channel
+    - Delivery records track status per channel for retry/analytics
 
 Usage:
     from notifications.models import NotificationType, Notification
@@ -20,6 +26,7 @@ Usage:
         key="new_follower",
         display_name="New Follower",
         title_template="{actor_name} started following you",
+        category=NotificationCategory.SOCIAL,
     )
 
     # Create a notification
@@ -44,6 +51,67 @@ from core.models import BaseModel
 
 if TYPE_CHECKING:
     pass
+
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+
+class NotificationCategory(models.TextChoices):
+    """
+    Categories for grouping notification types.
+
+    Used for category-level preference overrides. Users can disable
+    entire categories (e.g., all marketing notifications).
+    """
+
+    TRANSACTIONAL = "transactional", "Transactional"
+    SOCIAL = "social", "Social"
+    MARKETING = "marketing", "Marketing"
+    SYSTEM = "system", "System"
+
+
+class DeliveryChannel(models.TextChoices):
+    """Delivery channels for notifications."""
+
+    PUSH = "push", "Push Notification"
+    EMAIL = "email", "Email"
+    WEBSOCKET = "websocket", "WebSocket"
+
+
+class DeliveryStatus(models.TextChoices):
+    """
+    Status of a notification delivery attempt.
+
+    State Flow:
+        PENDING -> SENT -> DELIVERED (via webhook confirmation)
+        PENDING -> FAILED (permanent error or retries exhausted)
+        SKIPPED (user preference disabled or no delivery target)
+    """
+
+    PENDING = "pending", "Pending"
+    SENT = "sent", "Sent"
+    DELIVERED = "delivered", "Delivered"
+    FAILED = "failed", "Failed"
+    SKIPPED = "skipped", "Skipped"
+
+
+class SkipReason(models.TextChoices):
+    """Standardized reasons for skipped deliveries."""
+
+    GLOBAL_DISABLED = "global_disabled", "Global notifications disabled"
+    CATEGORY_DISABLED = "category_disabled", "Category disabled"
+    TYPE_DISABLED = "type_disabled", "Type disabled"
+    CHANNEL_DISABLED = "channel_disabled", "Channel disabled by user"
+    NO_DEVICE_TOKEN = "no_device_token", "No device token"
+    NO_EMAIL = "no_email", "No email address"
+    NO_CONNECTIONS = "no_connections", "No active connections"
+
+
+# =============================================================================
+# Configuration Models
+# =============================================================================
 
 
 class NotificationType(models.Model):
@@ -128,6 +196,14 @@ class NotificationType(models.Model):
     supports_websocket = models.BooleanField(
         default=True,
         help_text="Can be broadcast via WebSocket",
+    )
+
+    category = models.CharField(
+        max_length=20,
+        choices=NotificationCategory.choices,
+        default=NotificationCategory.TRANSACTIONAL,
+        db_index=True,
+        help_text="Category for preference grouping",
     )
 
     class Meta:
@@ -251,6 +327,13 @@ class Notification(BaseModel):
         help_text="Whether recipient has read this notification",
     )
 
+    idempotency_key = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Idempotency key to prevent duplicate notifications",
+    )
+
     class Meta:
         db_table = "notifications_notification"
         ordering = ["-created_at"]  # Newest first
@@ -265,6 +348,20 @@ class Notification(BaseModel):
                 fields=["recipient", "notification_type"],
                 name="notif_recipient_type_idx",
             ),
+            # Idempotency key lookup (partial index for non-null keys only)
+            models.Index(
+                fields=["idempotency_key"],
+                name="notif_idempotency_key_idx",
+                condition=models.Q(idempotency_key__isnull=False),
+            ),
+        ]
+        constraints = [
+            # Unique constraint on idempotency_key when not null
+            models.UniqueConstraint(
+                fields=["idempotency_key"],
+                name="notif_idempotency_key_unique",
+                condition=models.Q(idempotency_key__isnull=False),
+            ),
         ]
 
     def __str__(self) -> str:
@@ -273,3 +370,334 @@ class Notification(BaseModel):
             f"Notification({self.notification_type.key}) -> "
             f"User {self.recipient_id} [{read_status}]"
         )
+
+
+# =============================================================================
+# Preference Models
+# =============================================================================
+
+
+class UserGlobalPreference(BaseModel):
+    """
+    Global notification preferences for a user.
+
+    One-to-One with User. If all_disabled is True, all notifications
+    are suppressed regardless of other preference settings.
+
+    Usage:
+        # Disable all notifications for a user
+        pref, _ = UserGlobalPreference.objects.get_or_create(user=user)
+        pref.all_disabled = True
+        pref.save()
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="notification_global_preference",
+    )
+
+    all_disabled = models.BooleanField(
+        default=False,
+        help_text="Master switch to disable all notifications",
+    )
+
+    class Meta:
+        db_table = "notifications_user_global_preference"
+        verbose_name = "user global preference"
+        verbose_name_plural = "user global preferences"
+
+    def __str__(self) -> str:
+        status = "disabled" if self.all_disabled else "enabled"
+        return f"GlobalPreference(user={self.user_id}, {status})"
+
+
+class UserCategoryPreference(BaseModel):
+    """
+    Category-level notification preferences.
+
+    Allows users to disable entire categories (e.g., all marketing).
+    Takes precedence over type-level preferences when disabled.
+
+    Usage:
+        # Disable marketing notifications for a user
+        UserCategoryPreference.objects.update_or_create(
+            user=user,
+            category=NotificationCategory.MARKETING,
+            defaults={"disabled": True},
+        )
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notification_category_preferences",
+    )
+
+    category = models.CharField(
+        max_length=20,
+        choices=NotificationCategory.choices,
+        help_text="Notification category",
+    )
+
+    disabled = models.BooleanField(
+        default=False,
+        help_text="Disable all notifications in this category",
+    )
+
+    class Meta:
+        db_table = "notifications_user_category_preference"
+        verbose_name = "user category preference"
+        verbose_name_plural = "user category preferences"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "category"],
+                name="unique_user_category_pref",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["user", "category"],
+                name="notif_cat_pref_user_cat_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        status = "disabled" if self.disabled else "enabled"
+        return f"CategoryPreference(user={self.user_id}, {self.category}={status})"
+
+
+class UserNotificationPreference(BaseModel):
+    """
+    Per-notification-type preferences for a user.
+
+    Allows granular control over individual notification types and channels.
+    Null values for channel fields mean "inherit from NotificationType default".
+
+    Usage:
+        # Disable email for a specific notification type
+        UserNotificationPreference.objects.update_or_create(
+            user=user,
+            notification_type=notification_type,
+            defaults={"email_enabled": False},
+        )
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notification_type_preferences",
+    )
+
+    notification_type = models.ForeignKey(
+        NotificationType,
+        on_delete=models.CASCADE,
+        related_name="user_preferences",
+    )
+
+    # Master kill switch for this type
+    disabled = models.BooleanField(
+        default=False,
+        help_text="Disable all channels for this notification type",
+    )
+
+    # Per-channel overrides (null = inherit from NotificationType)
+    push_enabled = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Override push preference (null = use type default)",
+    )
+
+    email_enabled = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Override email preference (null = use type default)",
+    )
+
+    websocket_enabled = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Override websocket preference (null = use type default)",
+    )
+
+    class Meta:
+        db_table = "notifications_user_notification_preference"
+        verbose_name = "user notification preference"
+        verbose_name_plural = "user notification preferences"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "notification_type"],
+                name="unique_user_notif_type_pref",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["user", "notification_type"],
+                name="notif_type_pref_user_type_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        status = "disabled" if self.disabled else "enabled"
+        return f"TypePreference(user={self.user_id}, type={self.notification_type_id}, {status})"
+
+
+# =============================================================================
+# Delivery Tracking Models
+# =============================================================================
+
+
+class NotificationDelivery(BaseModel):
+    """
+    Tracks delivery status for each channel of a notification.
+
+    One NotificationDelivery record per (notification, channel) combination.
+    This enables retry logic, delivery confirmation via webhooks, and analytics.
+
+    Fields:
+        notification: The notification being delivered
+        channel: Delivery channel (push, email, websocket)
+        status: Current delivery status
+        attempt_count: Number of delivery attempts
+        provider_message_id: External ID from provider (for webhook callbacks)
+        skipped_reason: Why delivery was skipped (if status=SKIPPED)
+        failure_reason: Detailed error message if failed
+        is_permanent_failure: Whether failure is permanent (no retry)
+
+    Usage:
+        # Create pending delivery
+        delivery = NotificationDelivery.objects.create(
+            notification=notification,
+            channel=DeliveryChannel.PUSH,
+            status=DeliveryStatus.PENDING,
+        )
+
+        # Update after sending
+        delivery.status = DeliveryStatus.SENT
+        delivery.sent_at = timezone.now()
+        delivery.provider_message_id = "fcm_msg_123"
+        delivery.save()
+    """
+
+    notification = models.ForeignKey(
+        Notification,
+        on_delete=models.CASCADE,
+        related_name="deliveries",
+    )
+
+    channel = models.CharField(
+        max_length=20,
+        choices=DeliveryChannel.choices,
+        help_text="Delivery channel",
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=DeliveryStatus.choices,
+        default=DeliveryStatus.PENDING,
+        db_index=True,
+        help_text="Current delivery status",
+    )
+
+    # Timestamps
+    sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the notification was sent to the provider",
+    )
+
+    delivered_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When delivery was confirmed (via webhook)",
+    )
+
+    failed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When delivery failed",
+    )
+
+    # Provider tracking
+    provider_message_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Message ID from provider (FCM, SES, etc.) for webhook lookup",
+    )
+
+    # Failure details
+    failure_reason = models.TextField(
+        blank=True,
+        default="",
+        help_text="Detailed failure message",
+    )
+
+    failure_code = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="Error code from provider",
+    )
+
+    is_permanent_failure = models.BooleanField(
+        default=False,
+        help_text="True if retry won't help (e.g., invalid token)",
+    )
+
+    attempt_count = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Number of delivery attempts",
+    )
+
+    # Skip tracking
+    skipped_reason = models.CharField(
+        max_length=30,
+        choices=SkipReason.choices,
+        blank=True,
+        default="",
+        help_text="Reason if status=SKIPPED",
+    )
+
+    # WebSocket-specific metrics
+    websocket_devices_targeted = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Number of WebSocket connections targeted",
+    )
+
+    websocket_devices_reached = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Number of WebSocket connections that received the message",
+    )
+
+    class Meta:
+        db_table = "notifications_notification_delivery"
+        verbose_name = "notification delivery"
+        verbose_name_plural = "notification deliveries"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["notification", "channel"],
+                name="unique_notification_channel",
+            ),
+        ]
+        indexes = [
+            # For retry queries: find pending/failed deliveries by channel
+            models.Index(
+                fields=["status", "channel", "-created_at"],
+                name="notif_delivery_status_idx",
+            ),
+            # For webhook lookup by provider message ID
+            models.Index(
+                fields=["provider_message_id"],
+                name="notif_delivery_provider_idx",
+                condition=models.Q(provider_message_id__isnull=False),
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Delivery({self.notification_id}, {self.channel}, {self.status})"

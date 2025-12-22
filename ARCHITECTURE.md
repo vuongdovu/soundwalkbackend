@@ -1,6 +1,6 @@
 # Project Architecture
 
-> Last generated: 2025-12-17 UTC
+> Last generated: 2025-12-22 UTC
 
 ## Table of Contents
 
@@ -257,17 +257,49 @@ erDiagram
     NotificationType {
         int id PK
         string key UK
+        string category
         string title_template
-        text body_template
+        boolean supports_push
+        boolean supports_email
+        boolean supports_websocket
     }
     Notification {
         uuid id PK
         int notification_type_id FK
         uuid recipient_id FK
+        uuid actor_id FK
         boolean is_read
+        string idempotency_key UK
+    }
+    UserGlobalPreference {
+        uuid user_id PK,FK
+        boolean all_disabled
+    }
+    UserCategoryPreference {
+        uuid id PK
+        uuid user_id FK
+        string category
+        boolean disabled
+    }
+    UserNotificationPreference {
+        uuid id PK
+        uuid user_id FK
+        int notification_type_id FK
+        boolean disabled
+        boolean push_enabled
+        boolean email_enabled
+    }
+    NotificationDelivery {
+        uuid id PK
+        uuid notification_id FK
+        string channel
+        string status
+        string provider_message_id
     }
 
     NotificationType ||--o{ Notification : defines
+    Notification ||--o{ NotificationDelivery : has
+    NotificationType ||--o{ UserNotificationPreference : configures
 ```
 
 ### Media Domain
@@ -359,6 +391,16 @@ All API routes are prefixed with `/api/v1/`.
 | `/{id}/read/` | POST | Mark as read |
 | `/read-all/` | POST | Mark all as read |
 | `/unread-count/` | GET | Get unread count |
+| `/preferences/` | GET | Get all preferences |
+| `/preferences/global/` | PATCH | Update global mute |
+| `/preferences/category/` | PATCH | Update category preference |
+| `/preferences/type/` | PATCH | Update type preference |
+| `/preferences/bulk/` | POST | Bulk update preferences |
+| `/preferences/reset/` | POST | Reset preferences |
+| `/types/` | GET | List notification types |
+| `/types/{key}/` | GET | Get type by key |
+| `/webhooks/fcm/` | POST | FCM delivery callback |
+| `/webhooks/email/` | POST | Email delivery callback |
 
 ### Payments (`/api/v1/payments/`)
 
@@ -400,7 +442,7 @@ All API routes are prefixed with `/api/v1/`.
 | [`toolkit`](./app/toolkit/ARCHITECTURE.md) | 0 | 0 | SaaS protocols, helpers, decorators |
 | [`authentication`](./app/authentication/ARCHITECTURE.md) | 4 | 15+ | User management, OAuth, biometric auth |
 | [`payments`](./app/payments/ARCHITECTURE.md) | 8+ | 1 | Stripe payments, escrow, subscriptions, ledger |
-| [`notifications`](./app/notifications/ARCHITECTURE.md) | 2 | 5 | Multi-channel notification delivery |
+| [`notifications`](./app/notifications/ARCHITECTURE.md) | 6 | 15 | Multi-channel notification delivery with preferences |
 | [`chat`](./app/chat/ARCHITECTURE.md) | 4 | 12+ | Real-time messaging, WebSocket |
 | [`media`](./app/media/ARCHITECTURE.md) | 6 | 25+ | File uploads, storage, sharing, search, tagging |
 

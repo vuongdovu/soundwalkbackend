@@ -166,6 +166,7 @@ class TestNotificationServiceCreate:
         self, db, notification_type, user, mocker
     ):
         """Enqueues Celery tasks for channels the type supports."""
+        from notifications.models import DeliveryChannel
         from notifications.services import NotificationService
 
         # notification_type has supports_push=True, supports_websocket=True
@@ -183,9 +184,12 @@ class TestNotificationServiceCreate:
         assert result.success
         notification = result.data
 
-        # Verify tasks were enqueued
-        mock_push.assert_called_once_with(notification.id)
-        mock_ws.assert_called_once_with(notification.id)
+        # Verify tasks were enqueued with delivery IDs (not notification IDs)
+        push_delivery = notification.deliveries.get(channel=DeliveryChannel.PUSH)
+        ws_delivery = notification.deliveries.get(channel=DeliveryChannel.WEBSOCKET)
+
+        mock_push.assert_called_once_with(str(push_delivery.id))
+        mock_ws.assert_called_once_with(str(ws_delivery.id))
 
     def test_skips_tasks_for_unsupported_channels(
         self, db, push_only_notification_type, user, mocker
