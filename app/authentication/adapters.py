@@ -16,8 +16,12 @@ Security:
 
 import logging
 
+from django.contrib.auth import get_user_model
+
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from allauth.socialaccount.models import SocialAccount
+from rest_framework.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +86,42 @@ class CustomSocialAccountAdapter(DefaultSocialAccountAdapter):
         Configure in settings.py:
         SOCIALACCOUNT_ADAPTER = 'authentication.adapters.CustomSocialAccountAdapter'
     """
+
+    def pre_social_login(self, request, sociallogin):
+        """
+        Prevent duplicate users when the email already exists.
+
+        If a social login arrives with an email that matches an existing user,
+        link the social account to that user instead of creating a new one.
+        """
+        if sociallogin.is_existing:
+            return
+
+        email = (sociallogin.user and sociallogin.user.email) or ""
+        if not email:
+            return
+
+        User = get_user_model()
+        existing_user = User.objects.filter(email__iexact=email).first()
+        if not existing_user:
+            return
+
+        # If this provider is already linked, reuse that account
+        linked = SocialAccount.objects.filter(
+            user=existing_user, provider=sociallogin.account.provider
+        ).first()
+        if linked:
+            sociallogin.account = linked
+            sociallogin.user = existing_user
+            return
+
+        # Prevent creating a new user with the same email via social login
+        raise ValidationError(
+            {
+                "detail": "An account with this email already exists. "
+                "Sign in with your email/password first, then connect this provider."
+            }
+        )
 
     def save_user(self, request, sociallogin, form=None):
         """

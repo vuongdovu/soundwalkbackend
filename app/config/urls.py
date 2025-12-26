@@ -129,5 +129,5 @@ admin.site.index_title = "Welcome to the Admin Portal"
 # =============================================================================
 # Debug-only URLs
 # =============================================================================
-if settings.DEBUG:
-    urlpatterns += [path("silk/", include("silk.urls", namespace="silk"))]
+# if settings.DEBUG:
+#     urlpatterns += [path("silk/", include("silk.urls", namespace="silk"))]
