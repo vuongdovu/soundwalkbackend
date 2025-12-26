@@ -156,6 +156,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             ),
         ],
     )
+    is_complete = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Profile
@@ -166,7 +167,9 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "profile_picture",
             "timezone",
             "preferences",
+            "is_complete",
         ]
+        read_only_fields = ["is_complete"]
 
     def __init__(self, *args, **kwargs):
         """Make username required if profile doesn't have one set."""
@@ -232,6 +235,10 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("Preferences must be a JSON object")
         return value
+
+    def get_is_complete(self, obj):
+        """Return whether the profile is complete (has username set)."""
+        return bool(obj.username)
 
 
 class LinkedAccountSerializer(serializers.ModelSerializer):

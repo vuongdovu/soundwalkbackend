@@ -93,6 +93,18 @@ def _cookie_base_kwargs():
         "samesite": rest_auth.get("JWT_AUTH_SAMESITE", "Lax"),
     }
 
+class PatchedOAuth2Client(OAuth2Client):
+    """
+    Work around a dj-rest-auth/allauth argument duplication bug.
+
+    The serializer may pass scope_delimiter positionally and also in kwargs,
+    which raises "multiple values for argument 'scope_delimiter'". Strip the
+    kwarg to avoid the conflict.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop("scope_delimiter", None)
+        super().__init__(*args, **kwargs)
 
 class CookieTokenRefreshView(APIView):
     permission_classes = [AllowAny]
@@ -175,7 +187,7 @@ class LinkedInLoginView(SocialLoginView):
     """
 
     adapter_class = LinkedInOIDCAdapter
-    client_class = OAuth2Client
+    client_class = PatchedOAuth2Client
 
     def post(self, request, *args, **kwargs):
         callback_url = request.data.get("callback_url")
@@ -188,14 +200,6 @@ class LinkedInLoginView(SocialLoginView):
         return super().post(request, *args, **kwargs)
 
 
-@extend_schema(
-    summary="Sign in with Google",
-    description=(
-        "Authenticate using a Google OAuth2 token. For mobile apps, use the id_token "
-        "from Google Sign-In SDK. For web apps, use the authorization code flow."
-    ),
-    tags=["Auth"],
-)
 @extend_schema(
     summary="Sign in with Google",
     description=(
@@ -238,7 +242,7 @@ class GoogleLoginView(SocialLoginView):
     """
 
     adapter_class = GoogleOAuth2Adapter
-    client_class = OAuth2Client
+    client_class = PatchedOAuth2Client
     callback_url = "http://localhost:3000"
 
 
