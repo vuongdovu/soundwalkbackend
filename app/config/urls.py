@@ -98,6 +98,8 @@ api_v1_patterns = [
     path("payments/", include("payments.urls")),
     # Media
     path("media/", include("media.urls")),
+    #User Posts
+    path("user-post/", include("user_posts.urls"))
 ]
 
 urlpatterns = [

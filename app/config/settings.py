@@ -98,6 +98,7 @@ INSTALLED_APPS = [
     "notifications",
     "payments",
     "media",
+    "user_posts"
 ]
 
 MIDDLEWARE = [

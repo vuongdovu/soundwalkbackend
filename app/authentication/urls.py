@@ -32,8 +32,6 @@ Note:
 """
 
 from django.urls import path
-from authentication.views import CookieTokenRefreshView
-
 from authentication.views import (
     AppleLoginView,
     DeactivateAccountView,
@@ -47,6 +45,7 @@ from authentication.views import (
     BiometricAuthenticateView,
     BiometricDisableView,
     BiometricStatusView,
+    CookieTokenRefreshView
 )
 
 app_name = "authentication"
