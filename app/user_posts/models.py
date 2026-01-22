@@ -35,7 +35,14 @@ class UserPost(BaseModel, UUIDPrimaryKeyMixin, SoftDeleteMixin):
     lat = models.FloatField()
     lng = models.FloatField()
     accuracy_m = models.FloatField(null=True, blank=True)
+    h3_r4 = models.CharField(max_length=15, null=True, blank=True)
+    h3_r6 = models.CharField(max_length=15, null=True, blank=True)
+    h3_r9 = models.CharField(max_length=15, null=True, blank=True)
+
     # place = models.ForeignKey(Place, null=True, blank=True, on_delete=models.SET_NULL, related_name="posts")
+
+    # def __str__(self):
+    #     return f"User: {self.user.username}, Visibility: {self.visibility}, h3_r4: {self.h3_r4}"
 
 class UserPostLike(BaseModel, SoftDeleteMixin):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)

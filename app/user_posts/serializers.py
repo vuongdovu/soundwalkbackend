@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from user_posts.models import UserPost, UserPostLike
-
+from user_posts.utils import compute_cluster_id
 
 class UserPostSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -24,6 +24,14 @@ class UserPostSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def create(self, validated_data):
+        lat = validated_data["lat"]
+        lng = validated_data["lng"]
+        validated_data["h3_r4"] = compute_cluster_id(lat, lng, 4)
+        validated_data["h3_r6"] = compute_cluster_id(lat, lng, 6)
+        validated_data["h3_r9"] = compute_cluster_id(lat, lng, 9)
+        return super().create(validated_data)
 
     def validate(self, attrs):
         lat = attrs.get("lat")

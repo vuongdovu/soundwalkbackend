@@ -109,3 +109,8 @@ responses==0.25.3                  # HTTP mocking for OAuth tests
 freezegun==1.5.5                   # Time manipulation for token expiry tests (Python 3.14 support)
 pytest-mock==3.14.0                # Enhanced mocking utilities
 # ruff==0.8.4                       # Linting (optional)
+
+# -----------------------------------------------------------------------------
+# Map
+# -----------------------------------------------------------------------------
+h3==4.4.1
