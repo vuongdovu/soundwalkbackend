@@ -83,11 +83,6 @@ class UserPostViewSet(viewsets.ModelViewSet):
         queryset = self.filter_queryset(self.get_queryset()).filter(
             **{h3_field: h3_index}
         )
-        print("query set: ", self.get_queryset())
-        print("user post objects: ", UserPost.objects.all())
-
-        print(self.get_queryset().filter(
-            **{h3_field: h3_index}))
 
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -96,6 +91,8 @@ class UserPostViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    # Todo: create an endpoint so you can see a specific user's posts
 
     # def get_queryset(self):
     #     return UserPost.objects.filter(user=self.request.user)
