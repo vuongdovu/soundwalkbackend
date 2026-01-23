@@ -92,18 +92,31 @@ class UserPostViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=["get"], url_path="mine")
+    def user_posts(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_user_queryset())
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
     # Todo: create an endpoint so you can see a specific user's posts
 
-    # def get_queryset(self):
-    #     return UserPost.objects.filter(user=self.request.user)
-    
+    def get_user_queryset(self):
+        return UserPost.objects.filter(user=self.request.user)
+
     def get_queryset(self):
         return UserPost.objects.filter()
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
-    def perform_destory(self, instance):
+    def perform_destroy(self, instance):
         instance.soft_delete()
 
 
